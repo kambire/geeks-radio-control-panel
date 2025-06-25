@@ -625,7 +625,8 @@ main() {
     install_streaming_servers
     create_backend_api
     create_database_config
-    create_stream_services
+create_stream_services() {
+    log_info "Creando servicios de gestión de streams..."
     create_api_routes
     create_automation_scripts
     configure_backend_service
