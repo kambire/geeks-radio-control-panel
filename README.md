@@ -24,14 +24,14 @@ Un panel de administración completo estilo SonicPanel para gestionar radios con
 ### Método 1: Instalador Automático (Recomendado)
 ```bash
 # Descargar y ejecutar instalador
-curl -fsSL https://raw.githubusercontent.com/tu-usuario/geeks-radio/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/kambire/geeks-radio-control-panel/main/install.sh | bash
 ```
 
 ### Método 2: Instalación Manual
 ```bash
 # Clonar repositorio
-git clone https://github.com/tu-usuario/geeks-radio.git
-cd geeks-radio
+git clone https://github.com/kambire/geeks-radio-control-panel.git
+cd geeks-radio-control-panel
 
 # Instalar dependencias
 npm install
@@ -60,7 +60,7 @@ npm run dev
 ## 📁 Estructura del Proyecto
 
 ```
-geeks-radio/
+geeks-radio-control-panel/
 ├── src/
 │   ├── components/
 │   │   ├── AuthLogin.tsx          # Sistema de autenticación
@@ -179,8 +179,8 @@ stats (radio_id, listeners, bandwidth, uptime, date)
 ### Opción 1: Servidor VPS
 ```bash
 # En el servidor
-git clone https://github.com/tu-usuario/geeks-radio.git
-cd geeks-radio
+git clone https://github.com/kambire/geeks-radio-control-panel.git
+cd geeks-radio-control-panel
 ./install.sh
 
 # Configurar nginx/apache para servir la aplicación
@@ -232,8 +232,8 @@ Para conectar con la API real de SonicPanel:
 
 ### Desarrollo Local
 ```bash
-git clone https://github.com/tu-usuario/geeks-radio.git
-cd geeks-radio
+git clone https://github.com/kambire/geeks-radio-control-panel.git
+cd geeks-radio-control-panel
 npm install
 npm run dev
 ```
@@ -273,18 +273,17 @@ npm run dev
 ## 📞 Soporte
 
 ### Documentación
-- **Wiki**: [GitHub Wiki](https://github.com/tu-usuario/geeks-radio/wiki)
+- **Wiki**: [GitHub Wiki](https://github.com/kambire/geeks-radio-control-panel/wiki)
 - **API Docs**: Documentación de endpoints (próximamente)
 
 ### Comunidad
-- **Issues**: [GitHub Issues](https://github.com/tu-usuario/geeks-radio/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/tu-usuario/geeks-radio/discussions)
-- **Discord**: [Servidor de Discord](https://discord.gg/geeksradio)
+- **Issues**: [GitHub Issues](https://github.com/kambire/geeks-radio-control-panel/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/kambire/geeks-radio-control-panel/discussions)
 
 ### Soporte Comercial
 Para instalaciones empresariales y soporte dedicado:
 - **Email**: soporte@geeksradio.com
-- **Telefono**: +1 (555) 123-4567
+- **GitHub**: [kambire/geeks-radio-control-panel](https://github.com/kambire/geeks-radio-control-panel)
 
 ## 📄 Licencia
 
@@ -305,3 +304,5 @@ Desarrollado con ❤️ por el equipo de Geeks Radio
 ---
 
 **¿Te gusta este proyecto?** ⭐ Dale una estrella en GitHub y compártelo con la comunidad.
+
+**Repositorio**: https://github.com/kambire/geeks-radio-control-panel

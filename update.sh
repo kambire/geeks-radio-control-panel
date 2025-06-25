@@ -1,9 +1,9 @@
-
 #!/bin/bash
 
 # Geeks Radio - Script de Actualización Inteligente
 # Version: 1.0.0
 # Descripción: Sistema avanzado de actualización con respaldo y rollback
+# Repositorio: https://github.com/kambire/geeks-radio-control-panel
 
 set -e
 
@@ -20,6 +20,7 @@ PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKUP_DIR="$PROJECT_DIR/backups"
 SERVICE_NAME="geeks-radio"
 LOG_FILE="$PROJECT_DIR/update.log"
+REPO_URL="https://github.com/kambire/geeks-radio-control-panel.git"
 CURRENT_VERSION=""
 NEW_VERSION=""
 UPDATE_AVAILABLE=false
@@ -51,6 +52,7 @@ show_banner() {
     echo "╔════════════════════════════════════════════════════════════════╗"
     echo "║                     GEEKS RADIO UPDATER                        ║"
     echo "║                Sistema de Actualización v1.0                   ║"
+    echo "║          github.com/kambire/geeks-radio-control-panel          ║"
     echo "╚════════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
 }
@@ -106,28 +108,37 @@ get_current_version() {
 
 # Verificar actualizaciones disponibles
 check_for_updates() {
-    log_step "Verificando actualizaciones disponibles..."
+    log_step "Verificando actualizaciones disponibles desde GitHub..."
     
     if [[ ! -d "$PROJECT_DIR/.git" ]]; then
-        log_warning "No es un repositorio Git. No se pueden verificar actualizaciones automáticamente."
-        return 1
+        log_warning "No es un repositorio Git. Intentando reconectar con GitHub..."
+        
+        # Intentar inicializar repositorio si no existe
+        git init
+        git remote add origin "$REPO_URL" 2>/dev/null || git remote set-url origin "$REPO_URL"
+        
+        if ! git fetch origin main 2>/dev/null; then
+            log_error "No se pudo conectar al repositorio de GitHub"
+            return 1
+        fi
     fi
     
-    # Fetch últimos cambios
+    # Fetch últimos cambios desde GitHub
     if git fetch origin main 2>/dev/null; then
-        LOCAL_COMMIT=$(git rev-parse HEAD)
+        LOCAL_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo "none")
         REMOTE_COMMIT=$(git rev-parse origin/main)
         
         if [[ "$LOCAL_COMMIT" != "$REMOTE_COMMIT" ]]; then
             UPDATE_AVAILABLE=true
             NEW_VERSION=$(git show origin/main:package.json 2>/dev/null | node -p "JSON.parse(require('fs').readFileSync('/dev/stdin')).version" 2>/dev/null || echo "unknown")
             
-            log_info "¡Actualización disponible!"
+            log_info "¡Actualización disponible desde GitHub!"
+            log_info "Repositorio: https://github.com/kambire/geeks-radio-control-panel"
             log_info "Versión nueva: $NEW_VERSION"
             
             # Mostrar cambios
             echo ""
-            log_info "Cambios disponibles:"
+            log_info "Últimos cambios disponibles:"
             git log --oneline HEAD..origin/main | head -10 | while read line; do
                 echo -e "${CYAN}  • $line${NC}"
             done
@@ -135,11 +146,12 @@ check_for_updates() {
             
             return 0
         else
-            log_success "Ya tienes la versión más reciente"
+            log_success "Ya tienes la versión más reciente del repositorio"
             return 1
         fi
     else
-        log_error "No se pudo conectar al repositorio remoto"
+        log_error "No se pudo conectar al repositorio de GitHub"
+        log_error "Verifica tu conexión a internet y el repositorio: $REPO_URL"
         return 1
     fi
 }
@@ -216,10 +228,10 @@ stop_services() {
 
 # Aplicar actualización
 apply_update() {
-    log_step "Aplicando actualización..."
+    log_step "Aplicando actualización desde GitHub..."
     
-    # Actualizar código
-    log_info "Descargando últimos cambios..."
+    # Actualizar código desde GitHub
+    log_info "Descargando últimos cambios desde el repositorio..."
     git pull origin main
     
     # Verificar si package.json cambió
@@ -235,7 +247,7 @@ apply_update() {
     fi
     
     # Construir aplicación
-    log_info "Construyendo aplicación..."
+    log_info "Construyendo aplicación actualizada..."
     npm run build
     
     if [[ ! -d "$PROJECT_DIR/dist" ]]; then
@@ -244,7 +256,7 @@ apply_update() {
         exit 1
     fi
     
-    log_success "Actualización aplicada"
+    log_success "Actualización aplicada desde GitHub"
 }
 
 # Iniciar servicios
@@ -381,7 +393,8 @@ show_update_summary() {
     echo -e "   • Backup creado: ${CYAN}$(basename "$(cat "$PROJECT_DIR/.last_backup" 2>/dev/null || echo "N/A")")${NC}"
     echo ""
     
-    echo -e "${BLUE}🔗 ACCESO:${NC}"
+    echo -e "${BLUE}🔗 INFORMACIÓN:${NC}"
+    echo -e "   • Repositorio: ${GREEN}https://github.com/kambire/geeks-radio-control-panel${NC}"
     echo -e "   • Panel: ${GREEN}http://localhost${NC}"
     echo -e "   • Estado: ${GREEN}$(check_service_status && echo "Activo" || echo "Inactivo")${NC}"
     echo ""

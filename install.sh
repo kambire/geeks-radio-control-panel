@@ -1,9 +1,9 @@
-
 #!/bin/bash
 
 # Geeks Radio - Instalador Automático
 # Version: 1.0.0
 # Descripción: Script de instalación desatendida para Geeks Radio Panel
+# Repositorio: https://github.com/kambire/geeks-radio-control-panel
 
 set -e  # Salir si hay algún error
 
@@ -15,11 +15,12 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Variables de configuración
-PROJECT_NAME="geeks-radio"
+PROJECT_NAME="geeks-radio-control-panel"
 DEFAULT_PORT=3000
 INSTALL_DIR="/opt/geeks-radio"
 SERVICE_NAME="geeks-radio"
 LOG_FILE="/var/log/geeks-radio-install.log"
+REPO_URL="https://github.com/kambire/geeks-radio-control-panel.git"
 
 # Función para mostrar mensajes con colores
 log_info() {
@@ -50,6 +51,7 @@ show_banner() {
     echo -e "${NC}"
     echo -e "${BLUE}Panel de Administración para Radios Online${NC}"
     echo -e "${BLUE}Version 1.0.0 - Instalación Automática${NC}"
+    echo -e "${BLUE}Repositorio: https://github.com/kambire/geeks-radio-control-panel${NC}"
     echo ""
 }
 
@@ -169,7 +171,7 @@ create_app_user() {
 
 # Descargar y configurar la aplicación
 download_application() {
-    log_info "Descargando aplicación..."
+    log_info "Descargando aplicación desde GitHub..."
     
     # Crear directorio de instalación
     if [[ "$CREATE_USER" == true ]]; then
@@ -179,7 +181,7 @@ download_application() {
         mkdir -p "$INSTALL_DIR"
     fi
     
-    # Clonar repositorio o descargar archivos
+    # Clonar repositorio
     cd "$(dirname "$INSTALL_DIR")"
     
     if [[ -d "$INSTALL_DIR/.git" ]]; then
@@ -187,14 +189,13 @@ download_application() {
         cd "$INSTALL_DIR"
         git pull origin main
     else
-        log_info "Clonando repositorio..."
-        # Nota: Reemplazar con la URL real del repositorio
-        if git clone https://github.com/tu-usuario/geeks-radio.git "$(basename "$INSTALL_DIR")"; then
+        log_info "Clonando repositorio desde GitHub..."
+        if git clone "$REPO_URL" "$(basename "$INSTALL_DIR")"; then
             log_success "Repositorio clonado exitosamente"
         else
-            log_warning "No se pudo clonar el repositorio. Creando estructura básica..."
+            log_error "No se pudo clonar el repositorio desde $REPO_URL"
+            log_info "Creando estructura básica..."
             mkdir -p "$INSTALL_DIR"
-            # Crear archivos básicos si no existe el repositorio
             create_basic_structure
         fi
     fi
@@ -216,9 +217,13 @@ create_basic_structure() {
     # Crear package.json básico
     cat > package.json << 'EOF'
 {
-  "name": "geeks-radio",
+  "name": "geeks-radio-control-panel",
   "version": "1.0.0",
   "description": "Panel de administración para radios online",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kambire/geeks-radio-control-panel.git"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -464,6 +469,7 @@ create_update_script() {
 
 # Geeks Radio - Script de Actualización
 # Version: 1.0.0
+# Repositorio: https://github.com/kambire/geeks-radio-control-panel
 
 set -e
 
@@ -492,7 +498,7 @@ log_error() {
 
 # Verificar si hay actualizaciones
 check_updates() {
-    log_info "Verificando actualizaciones..."
+    log_info "Verificando actualizaciones desde GitHub..."
     
     git fetch origin main
     LOCAL=$(git rev-parse HEAD)
@@ -502,7 +508,7 @@ check_updates() {
         log_success "No hay actualizaciones disponibles"
         exit 0
     else
-        log_info "Actualización disponible"
+        log_info "Actualización disponible desde repositorio"
         return 0
     fi
 }
@@ -618,7 +624,7 @@ show_summary() {
     
     echo -e "${BLUE}📚 DOCUMENTACIÓN:${NC}"
     echo -e "   • README: ${GREEN}$INSTALL_DIR/README.md${NC}"
-    echo -e "   • GitHub: ${GREEN}https://github.com/tu-usuario/geeks-radio${NC}"
+    echo -e "   • GitHub: ${GREEN}https://github.com/kambire/geeks-radio-control-panel${NC}"
     echo ""
     
     log_success "¡Disfruta usando Geeks Radio Panel!"
@@ -656,6 +662,3 @@ trap 'log_error "Instalación interrumpida. Revisa el log: $LOG_FILE"' ERR
 
 # Ejecutar instalación
 main "$@"
-EOF
-
-chmod +x install.sh
