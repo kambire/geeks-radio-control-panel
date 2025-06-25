@@ -184,7 +184,7 @@ EOF
     log_success "Servidores de streaming instalados"
 }
 
-# Crear estructura de backend
+# Crear backend API
 create_backend_api() {
     log_info "Creando backend API..."
     cd "$INSTALL_DIR"
@@ -386,6 +386,175 @@ EOF
     log_success "Configuración de base de datos creada"
 }
 
+
+# Crear scripts de automatización
+create_automation_scripts() {
+    log_info "Creando scripts de automatización..."
+    # Script de monitoreo
+    sudo tee "$INSTALL_DIR/monitor-streams.sh" > /dev/null << 'EOF'
+#!/bin/bash
+# Geeks Radio - Monitor de Streams
+LOG_FILE="/var/log/geeks-radio-monitor.log"
+API_URL="http://localhost:3001/api"
+log_message() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | tee -a "$LOG_FILE"
+}
+# Verificar que Icecast esté corriendo
+check_icecast() {
+    if ! systemctl is-active --quiet icecast2; then
+        log_message "WARNING: Icecast2 no está corriendo, intentando reiniciar..."
+        sudo systemctl restart icecast2
+        sleep 5
+        if systemctl is-active --quiet icecast2; then
+            log_message "INFO: Icecast2 reiniciado exitosamente"
+        else
+            log_message "ERROR: No se pudo reiniciar Icecast2"
+        fi
+    fi
+}
+# Verificar streams activos
+check_streams() {
+    log_message "INFO: Verificando estado de streams..."
+    curl -s "$API_URL/streams/stats" > /tmp/stream_stats.json
+    if [ $? -eq 0 ]; then
+        log_message "INFO: Estadísticas obtenidas exitosamente"
+    else
+        log_message "ERROR: No se pudieron obtener estadísticas de streams"
+    fi
+}
+main() {
+    log_message "INFO: Iniciando monitoreo de streams"
+    check_icecast
+    check_streams
+    log_message "INFO: Monitoreo completado"
+}
+main "$@"
+EOF
+
+    # Script de backup
+    sudo tee "$INSTALL_DIR/backup-system.sh" > /dev/null << 'EOF'
+#!/bin/bash
+# Geeks Radio - Sistema de Backup Automático
+BACKUP_DIR="/opt/geeks-radio/backups"
+DATE=$(date +%Y%m%d_%H%M%S)
+BACKUP_PATH="$BACKUP_DIR/backup_$DATE"
+log_info() {
+    echo "[INFO] $1"
+}
+mkdir -p "$BACKUP_PATH"
+# Backup de base de datos
+log_info "Respaldando base de datos..."
+cp /opt/geeks-radio/backend/geeksradio.db "$BACKUP_PATH/"
+# Backup de configuraciones
+log_info "Respaldando configuraciones..."
+cp -r /etc/icecast2 "$BACKUP_PATH/icecast_config"
+cp -r /opt/shoutcast "$BACKUP_PATH/shoutcast_config"
+# Backup de logs importantes
+log_info "Respaldando logs..."
+mkdir -p "$BACKUP_PATH/logs"
+cp /var/log/geeks-radio*.log "$BACKUP_PATH/logs/" 2>/dev/null || true
+# Comprimir backup
+log_info "Comprimiendo backup..."
+cd "$BACKUP_DIR"
+tar -czf "backup_$DATE.tar.gz" "backup_$DATE"
+rm -rf "backup_$DATE"
+# Limpiar backups antiguos (mantener solo los últimos 7)
+find "$BACKUP_DIR" -name "backup_*.tar.gz" -mtime +7 -delete
+log_info "Backup completado: backup_$DATE.tar.gz"
+EOF
+
+    # Script de instalación de AutoDJ (opcional)
+    sudo tee "$INSTALL_DIR/install-autodj.sh" > /dev/null << 'EOF'
+#!/bin/bash
+# Geeks Radio - Instalador de AutoDJ (Liquidsoap)
+log_info() {
+    echo "[INFO] $1"
+}
+log_info "Instalando AutoDJ (Liquidsoap)..."
+case $(lsb_release -si) in
+    "Ubuntu"|"Debian")
+        sudo apt-get update
+        sudo apt-get install -y liquidsoap liquidsoap-plugin-all
+        ;;
+    "CentOS"|"Fedora")
+        sudo yum install -y liquidsoap
+        ;;
+esac
+sudo mkdir -p /opt/geeks-radio/music
+sudo mkdir -p /opt/geeks-radio/playlists
+sudo mkdir -p /opt/geeks-radio/autodj-configs
+cat > /opt/geeks-radio/autodj-configs/basic.liq << 'EOF'
+# Configuración básica de AutoDJ para Geeks Radio
+set("log.file.path", "/var/log/liquidsoap.log")
+set("log.level", 3)
+music = playlist("/opt/geeks-radio/music/")
+music = crossfade(start_next=2.0, fade_in=2.0, fade_out=2.0, music)
+output.icecast(%mp3,
+  host="localhost", port=8000,
+  password="geeksradio2024",
+  mount="/autodj",
+  music)
+EOF
+log_info "AutoDJ (Liquidsoap) instalado y configurado"
+EOF
+
+    # Hacer scripts ejecutables
+    sudo chmod +x "$INSTALL_DIR"/*.sh
+    log_success "Scripts de automatización creados"
+}
+
+
+# Configurar servicios systemd para backend
+configure_backend_service() {
+    if [[ "$DISTRO" == "macos" ]] || [[ "$CREATE_USER" == false ]]; then
+        log_info "Saltando configuración de servicio backend"
+        return
+    fi
+    log_info "Configurando servicio backend..."
+    cd "$INSTALL_DIR/backend"
+    if [[ "$CREATE_USER" == true ]]; then
+        sudo -u geeksradio npm install
+    else
+        npm install
+    fi
+    # Servicio para backend API
+    sudo tee /etc/systemd/system/geeks-radio-api.service > /dev/null << EOF
+[Unit]
+Description=Geeks Radio Backend API
+Documentation=https://github.com/kambire/geeks-radio-control-panel 
+After=network.target
+[Service]
+Type=simple
+User=geeksradio
+WorkingDirectory=$INSTALL_DIR/backend
+Environment=NODE_ENV=production
+Environment=PORT=3001
+ExecStart=/usr/bin/npm start
+Restart=on-failure
+RestartSec=10
+KillMode=mixed
+KillSignal=SIGINT
+TimeoutStopSec=5
+SyslogIdentifier=geeks-radio-api
+[Install]
+WantedBy=multi-user.target
+EOF
+    sudo systemctl daemon-reload
+    sudo systemctl enable geeks-radio-api
+    log_success "Servicio backend configurado"
+}
+
+# Configurar cron jobs
+configure_cron_jobs() {
+    log_info "Configurando tareas programadas..."
+    (crontab -l 2>/dev/null; echo "# Geeks Radio - Tareas automáticas") | crontab -
+    (crontab -l 2>/dev/null; echo "*/5 * * * * $INSTALL_DIR/monitor-streams.sh") | crontab -
+    (crontab -l 2>/dev/null; echo "0 2 * * * $INSTALL_DIR/backup-system.sh") | crontab -
+    log_success "Tareas programadas configuradas"
+}
+
+
+
 # Actualizar configuración de nginx para incluir API
 update_nginx_config() {
     log_info "Actualizando configuración de nginx..."
@@ -444,6 +613,28 @@ EOF
     fi
 }
 
+
+
+# Función principal
+main() {
+    log_info "Iniciando instalación completa de Geeks Radio Panel..."
+    log_info "Log de instalación: $LOG_FILE"
+    detect_system
+    install_system_dependencies
+    install_nodejs
+    install_streaming_servers
+    create_backend_api
+    create_database_config
+    create_stream_services
+    create_api_routes
+    create_automation_scripts
+    configure_backend_service
+    configure_cron_jobs
+    update_nginx_config
+    start_all_services
+    show_summary
+}
+
 # Mostrar resumen de configuración al final
 show_summary() {
     log_info "Resumen de configuración:"
@@ -459,20 +650,6 @@ show_summary() {
     echo -e "  Contraseña de fuente: geeksradio2024"
     echo -e "  Contraseña de administrador: geeksradio2024"
     echo -e "${GREEN}=========================${NC}"
-}
-
-# Función principal
-main() {
-    log_info "Iniciando instalación completa de Geeks Radio Panel..."
-    log_info "Log de instalación: $LOG_FILE"
-    detect_system
-    install_system_dependencies
-    install_nodejs
-    install_streaming_servers
-    create_backend_api
-    create_database_config
-    update_nginx_config
-    show_summary
 }
 
 main "$@"
