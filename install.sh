@@ -80,11 +80,18 @@ install_nodejs() {
 # Instalar servidores de streaming
 install_streaming_servers() {
     log_info "Instalando servidores de streaming..."
+    # Preconfigurar Icecast2 para instalación desatendida
+    echo "icecast2 icecast2/hostname string localhost" | sudo debconf-set-selections
+    echo "icecast2 icecast2/adminpassword password geeksradio2024" | sudo debconf-set-selections
+    echo "icecast2 icecast2/sourcepassword password geeksradio2024" | sudo debconf-set-selections
+    echo "icecast2 icecast2/relaypassword password geeksradio2024" | sudo debconf-set-selections
+    echo "icecast2 icecast2/setup-instance boolean true" | sudo debconf-set-selections
+
     # Instalar Icecast2
     case $DISTRO in
         "ubuntu"|"debian")
             sudo apt-get update
-            sudo apt-get install -y icecast2
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y icecast2
             ;;
         "centos"|"fedora")
             sudo $PKG_MANAGER install -y icecast
@@ -93,6 +100,7 @@ install_streaming_servers() {
             brew install icecast
             ;;
     esac
+
     # Configurar Icecast2
     log_info "Configurando Icecast2..."
     sudo tee "$ICECAST_CONFIG_DIR/icecast.xml" > /dev/null << 'EOF'
@@ -146,6 +154,7 @@ install_streaming_servers() {
     </security>
 </icecast>
 EOF
+
     # Descargar e instalar SHOUTcast (versión gratuita)
     log_info "Instalando SHOUTcast Server..."
     sudo mkdir -p "$SHOUTCAST_DIR"
@@ -155,6 +164,7 @@ EOF
         sudo tar -xzf sc_serv2_linux_x64-latest.tar.gz -C "$SHOUTCAST_DIR"
         sudo chmod +x "$SHOUTCAST_DIR/sc_serv"
     fi
+
     # Crear configuración básica de SHOUTcast
     sudo tee "$SHOUTCAST_DIR/sc_serv_basic.conf" > /dev/null << 'EOF'
 ; SHOUTcast server configuration
@@ -166,6 +176,7 @@ realtime=1
 screensaver=geeksradio
 unique=1
 EOF
+
     # Crear directorios de logs
     sudo mkdir -p "$SHOUTCAST_DIR/logs"
     sudo mkdir -p "$STREAMS_DIR"
@@ -375,382 +386,11 @@ EOF
     log_success "Configuración de base de datos creada"
 }
 
-# Crear servicios de gestión de streams
-create_stream_services() {
-    log_info "Creando servicios de gestión de streams..."
-    sudo tee "$INSTALL_DIR/backend/services/streamManager.js" > /dev/null << 'EOF'
-const { spawn, exec } = require('child_process');
-const fs = require('fs');
-const path = require('path');
-const axios = require('axios');
-class StreamManager {
-  constructor() {
-    this.activeStreams = new Map();
-    this.streamsDir = '/opt/geeks-radio/streams';
-    this.icecastConfig = '/etc/icecast2/icecast.xml';
-    this.shoutcastDir = '/opt/shoutcast';
-  }
-  // Crear stream en Icecast
-  async createIcecastStream(radioData) {
-    const { name, port, bitrate, mount_point, source_password } = radioData;
-    try {
-      // Crear configuración específica del mount point
-      const mountConfig = `
-        <mount type="normal">
-          <mount-name>/${mount_point}</mount-name>
-          <username>source</username>
-          <password>${source_password}</password>
-          <max-listeners>${radioData.max_listeners}</max-listeners>
-          <dump-file>/opt/geeks-radio/streams/${name}_dump.mp3</dump-file>
-          <burst-on-connect>1</burst-on-connect>
-          <fallback-mount>/silence.mp3</fallback-mount>
-          <fallback-override>1</fallback-override>
-        </mount>
-      `;
-      // Agregar mount al archivo de configuración de Icecast
-      await this.addMountToIcecast(mountConfig);
-      // Reiniciar Icecast para aplicar cambios
-      await this.restartIcecast();
-      console.log(`✅ Stream Icecast creado: ${name} en puerto ${port}`);
-      return true;
-    } catch (error) {
-      console.error(`❌ Error creando stream Icecast: ${error.message}`);
-      return false;
-    }
-  }
-  // Crear stream en SHOUTcast
-  async createShoutcastStream(radioData) {
-    const { name, port, bitrate, source_password, admin_password } = radioData;
-    try {
-      const configPath = path.join(this.shoutcastDir, `sc_serv_${port}.conf`);
-      const config = `
-; SHOUTcast Server Configuration for ${name}
-password=${source_password}
-adminpassword=${admin_password}
-portbase=${port}
-maxuser=${radioData.max_listeners}
-logfile=logs/sc_serv_${port}.log
-realtime=1
-screensaver=${name}
-unique=1
-allowrelay=1
-relayport=${port}
-streamtitle=${name}
-streamurl=http://localhost:${port}
-streamgenre=Various
-streambitrate=${bitrate}
-`;
-      fs.writeFileSync(configPath, config);
-      // Iniciar instancia de SHOUTcast
-      const shoutcastProcess = spawn(path.join(this.shoutcastDir, 'sc_serv'), [configPath], {
-        detached: true,
-        stdio: 'ignore'
-      });
-      shoutcastProcess.unref();
-      this.activeStreams.set(port, {
-        type: 'shoutcast',
-        process: shoutcastProcess,
-        config: configPath,
-        data: radioData
-      });
-      console.log(`✅ Stream SHOUTcast creado: ${name} en puerto ${port}`);
-      return true;
-    } catch (error) {
-      console.error(`❌ Error creando stream SHOUTcast: ${error.message}`);
-      return false;
-    }
-  }
-  // Detener stream
-  async stopStream(port, serverType) {
-    try {
-      if (serverType === 'shoutcast' && this.activeStreams.has(port)) {
-        const streamInfo = this.activeStreams.get(port);
-        if (streamInfo.process) {
-          streamInfo.process.kill();
-        }
-        this.activeStreams.delete(port);
-      }
-      console.log(`✅ Stream detenido en puerto ${port}`);
-      return true;
-    } catch (error) {
-      console.error(`❌ Error deteniendo stream: ${error.message}`);
-      return false;
-    }
-  }
-  // Obtener estadísticas del stream
-  async getStreamStats(port, serverType) {
-    try {
-      let stats = {
-        listeners: 0,
-        peak_listeners: 0,
-        bitrate: 0,
-        uptime: 0,
-        status: 'offline'
-      };
-      if (serverType === 'icecast') {
-        const response = await axios.get(`http://localhost:${port}/status-json.xsl`);
-        if (response.data && response.data.icestats && response.data.icestats.source) {
-          const source = response.data.icestats.source;
-          stats = {
-            listeners: source.listeners || 0,
-            peak_listeners: source.listener_peak || 0,
-            bitrate: source.bitrate || 0,
-            uptime: source.stream_start ? Date.now() - new Date(source.stream_start).getTime() : 0,
-            status: 'online'
-          };
-        }
-      } else if (serverType === 'shoutcast') {
-        const response = await axios.get(`http://localhost:${port}/statistics`);
-        // Parsear estadísticas de SHOUTcast
-        stats.status = response.status === 200 ? 'online' : 'offline';
-      }
-      return stats;
-    } catch (error) {
-      return {
-        listeners: 0,
-        peak_listeners: 0,
-        bitrate: 0,
-        uptime: 0,
-        status: 'offline'
-      };
-    }
-  }
-  // Métodos auxiliares
-  async addMountToIcecast(mountConfig) {
-    // Implementar lógica para agregar mount al archivo de configuración
-    return new Promise((resolve, reject) => {
-      fs.readFile(this.icecastConfig, 'utf8', (err, data) => {
-        if (err) return reject(err);
-        const updatedConfig = data.replace('</icecast>', `${mountConfig}
-</icecast>`);
-        fs.writeFile(this.icecastConfig, updatedConfig, (err) => {
-          if (err) return reject(err);
-          resolve();
-        });
-      });
-    });
-  }
-  async restartIcecast() {
-    return new Promise((resolve, reject) => {
-      exec('sudo systemctl restart icecast2', (error, stdout, stderr) => {
-        if (error) return reject(error);
-        setTimeout(resolve, 2000); // Esperar 2 segundos para que inicie
-      });
-    });
-  }
-}
-module.exports = new StreamManager();
-EOF
-    log_success "Servicios de gestión de streams creados"
-}
-
-# Crear rutas de API
-create_api_routes() {
-    log_info "Creando rutas de API..."
-    # Ruta de autenticación
-    sudo tee "$INSTALL_DIR/backend/routes/auth.js" > /dev/null << 'EOF'
-const express = require('express');
-const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken');
-const { db } = require('../config/database');
-const router = express.Router();
-// Login
-router.post('/login', (req, res) => {
-  const { username, password } = req.body;
-  db.get('SELECT * FROM users WHERE username = ?', [username], async (err, user) => {
-    if (err) {
-      return res.status(500).json({ error: 'Error de base de datos' });
-    }
-    if (!user) {
-      return res.status(401).json({ error: 'Usuario no encontrado' });
-    }
-    const isValid = await bcrypt.compare(password, user.password);
-    if (!isValid) {
-      return res.status(401).json({ error: 'Contraseña incorrecta' });
-    }
-    const token = jwt.sign(
-      { id: user.id, username: user.username, role: user.role },
-      'geeksradio_secret_key',
-      { expiresIn: '24h' }
-    );
-    res.json({
-      token,
-      user: {
-        id: user.id,
-        username: user.username,
-        role: user.role
-      }
-    });
-  });
-});
-module.exports = router;
-EOF
-    # Ruta de radios
-    sudo tee "$INSTALL_DIR/backend/routes/radios.js" > /dev/null << 'EOF'
-const express = require('express');
-const { db } = require('../config/database');
-const streamManager = require('../services/streamManager');
-const router = express.Router();
-// Obtener todas las radios
-router.get('/', (req, res) => {
-  const query = `
-    SELECT r.*, c.name as client_name, p.name as plan_name 
-    FROM radios r 
-    LEFT JOIN clients c ON r.client_id = c.id 
-    LEFT JOIN plans p ON r.plan_id = p.id
-  `;
-  db.all(query, [], (err, rows) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    res.json(rows);
-  });
-});
-// Crear nueva radio
-router.post('/', async (req, res) => {
-  const { name, client_id, plan_id, server_type, port, max_listeners, bitrate, autodj_enabled } = req.body;
-  const source_password = 'geeksradio' + Math.random().toString(36).substr(2, 8);
-  const admin_password = 'admin' + Math.random().toString(36).substr(2, 8);
-  const mount_point = name.toLowerCase().replace(/[^a-z0-9]/g, '');
-  db.run(`
-    INSERT INTO radios (name, client_id, plan_id, server_type, port, max_listeners, bitrate, autodj_enabled, mount_point, source_password, admin_password)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `, [name, client_id, plan_id, server_type, port, max_listeners, bitrate, autodj_enabled, mount_point, source_password, admin_password], 
-  async function(err) {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    // Crear stream real
-    const radioData = {
-      id: this.lastID,
-      name,
-      port,
-      bitrate,
-      max_listeners,
-      mount_point,
-      source_password,
-      admin_password
-    };
-    let streamCreated = false;
-    if (server_type === 'icecast') {
-      streamCreated = await streamManager.createIcecastStream(radioData);
-    } else if (server_type === 'shoutcast') {
-      streamCreated = await streamManager.createShoutcastStream(radioData);
-    }
-    res.json({ 
-      id: this.lastID, 
-      message: 'Radio creada exitosamente',
-      streamCreated,
-      credentials: {
-        source_password,
-        admin_password,
-        mount_point: server_type === 'icecast' ? `/${mount_point}` : port
-      }
-    });
-  });
-});
-// Actualizar estado de radio
-router.patch('/:id/status', async (req, res) => {
-  const { id } = req.params;
-  const { status } = req.body;
-  db.get('SELECT * FROM radios WHERE id = ?', [id], async (err, radio) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    if (!radio) {
-      return res.status(404).json({ error: 'Radio no encontrada' });
-    }
-    if (status === 'suspended') {
-      await streamManager.stopStream(radio.port, radio.server_type);
-    }
-    db.run('UPDATE radios SET status = ? WHERE id = ?', [status, id], function(err) {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
-      res.json({ message: 'Estado actualizado' });
-    });
-  });
-});
-module.exports = router;
-EOF
-    # Crear rutas para clients, plans y streams
-    sudo tee "$INSTALL_DIR/backend/routes/clients.js" > /dev/null << 'EOF'
-const express = require('express');
-const { db } = require('../config/database');
-const router = express.Router();
-router.get('/', (req, res) => {
-  db.all('SELECT * FROM clients ORDER BY created_at DESC', [], (err, rows) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    res.json(rows);
-  });
-});
-router.post('/', (req, res) => {
-  const { name, email, phone, company, address } = req.body;
-  db.run(`
-    INSERT INTO clients (name, email, phone, company, address)
-    VALUES (?, ?, ?, ?, ?)
-  `, [name, email, phone, company, address], function(err) {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    res.json({ id: this.lastID, message: 'Cliente creado exitosamente' });
-  });
-});
-module.exports = router;
-EOF
-    sudo tee "$INSTALL_DIR/backend/routes/plans.js" > /dev/null << 'EOF'
-const express = require('express');
-const { db } = require('../config/database');
-const router = express.Router();
-router.get('/', (req, res) => {
-  db.all('SELECT * FROM plans ORDER BY price ASC', [], (err, rows) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    res.json(rows);
-  });
-});
-module.exports = router;
-EOF
-    sudo tee "$INSTALL_DIR/backend/routes/streams.js" > /dev/null << 'EOF'
-const express = require('express');
-const { db } = require('../config/database');
-const streamManager = require('../services/streamManager');
-const router = express.Router();
-// Obtener estadísticas de todos los streams
-router.get('/stats', async (req, res) => {
-  db.all('SELECT * FROM radios WHERE status = "active"', [], async (err, radios) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    const stats = [];
-    for (const radio of radios) {
-      const streamStats = await streamManager.getStreamStats(radio.port, radio.server_type);
-      stats.push({
-        ...radio,
-        ...streamStats
-      });
-      // Guardar estadísticas en la base de datos
-      db.run(`
-        INSERT INTO stats (radio_id, listeners, bandwidth, uptime, peak_listeners)
-        VALUES (?, ?, ?, ?, ?)
-      `, [radio.id, streamStats.listeners, 0, streamStats.uptime, streamStats.peak_listeners]);
-    }
-    res.json(stats);
-  });
-});
-module.exports = router;
-EOF
-    log_success "Rutas de API creadas"
-}
-
 # Actualizar configuración de nginx para incluir API
 update_nginx_config() {
     log_info "Actualizando configuración de nginx..."
     NGINX_CONFIG="/etc/nginx/sites-available/geeks-radio"
-    sudo tee "$NGINX_CONFIG" > /dev/null << 'EOF'
+    sudo tee "$NGINX_CONFIG" > /dev/null << EOF
 server {
     listen 80;
     server_name localhost $(hostname -I | awk '{print $1}' 2>/dev/null || echo "127.0.0.1");
@@ -804,6 +444,23 @@ EOF
     fi
 }
 
+# Mostrar resumen de configuración al final
+show_summary() {
+    log_info "Resumen de configuración:"
+    echo -e "${GREEN}=========================${NC}"
+    echo -e "Panel de control: http://$(hostname -I | awk '{print $1}')"
+    echo -e "Backend API: http://$(hostname -I | awk '{print $1}'):3001/api"
+    echo -e "Icecast2:"
+    echo -e "  URL: http://$(hostname -I | awk '{print $1}'):8000"
+    echo -e "  Contraseña de fuente: geeksradio2024"
+    echo -e "  Contraseña de administrador: geeksradio2024"
+    echo -e "SHOUTcast:"
+    echo -e "  Puerto base: 8001"
+    echo -e "  Contraseña de fuente: geeksradio2024"
+    echo -e "  Contraseña de administrador: geeksradio2024"
+    echo -e "${GREEN}=========================${NC}"
+}
+
 # Función principal
 main() {
     log_info "Iniciando instalación completa de Geeks Radio Panel..."
@@ -814,10 +471,8 @@ main() {
     install_streaming_servers
     create_backend_api
     create_database_config
-    create_stream_services
-    create_api_routes
     update_nginx_config
-    log_success "Instalación completada exitosamente"
+    show_summary
 }
 
 main "$@"
