@@ -1,3 +1,4 @@
+
 #!/bin/bash
 
 # Geeks Radio - Instalador Automático Completo
@@ -24,10 +25,38 @@ API_PORT=7001
 INSTALL_DIR="/opt/geeks-radio"
 SERVICE_NAME="geeks-radio"
 API_SERVICE_NAME="geeks-radio-api"
-LOG_FILE="/var/log/geeks-radio-install.log"
+LOG_FILE="/tmp/geeks-radio-install.log"
 REPO_URL="https://github.com/kambire/geeks-radio-control-panel.git"
 ICECAST_CONFIG_DIR="/etc/icecast2"
+SHOUTCAST_DIR="/opt/shoutcast"
+STREAMS_DIR="/opt/geeks-radio/streams"
 PUBLIC_IP=""
+
+# Verificar si se ejecuta como root
+check_root() {
+    if [[ $EUID -ne 0 ]]; then
+        echo -e "${RED}[ERROR]${NC} Este script debe ejecutarse como root"
+        echo -e "${BLUE}[INFO]${NC} Ejecuta: sudo bash install.sh"
+        exit 1
+    fi
+}
+
+# Crear archivo de log con permisos correctos
+setup_logging() {
+    # Crear directorio de logs si no existe
+    mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+    
+    # Crear archivo de log
+    touch "$LOG_FILE" 2>/dev/null || {
+        LOG_FILE="/tmp/geeks-radio-install-$(date +%s).log"
+        touch "$LOG_FILE"
+    }
+    
+    # Dar permisos apropiados
+    chmod 666 "$LOG_FILE" 2>/dev/null || true
+    
+    echo "=== Geeks Radio Install v2.1.0 - $(date) ===" > "$LOG_FILE"
+}
 
 # Funciones de logging
 log_info() {
@@ -54,17 +83,31 @@ show_banner() {
     echo "║                    GEEKS RADIO PANEL                         ║"
     echo "║              Instalación Automática Completa                ║"
     echo "║                     Versión 2.1.0                           ║"
+    echo "║                    Puerto 7000 TCP                          ║"
     echo "╚══════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
 }
 
-# Verificar si se ejecuta como root
-check_root() {
-    if [[ $EUID -ne 0 ]]; then
-        log_error "Este script debe ejecutarse como root"
-        log_info "Ejecuta: sudo $0"
-        exit 1
+# Detectar IP pública
+detect_public_ip() {
+    log_info "Detectando IP pública..."
+    
+    # Intentar varios servicios para obtener IP pública
+    PUBLIC_IP=$(curl -s --connect-timeout 5 ipinfo.io/ip 2>/dev/null || \
+                curl -s --connect-timeout 5 ifconfig.me 2>/dev/null || \
+                curl -s --connect-timeout 5 icanhazip.com 2>/dev/null || \
+                curl -s --connect-timeout 5 ident.me 2>/dev/null || \
+                hostname -I | awk '{print $1}' 2>/dev/null || \
+                echo "localhost")
+    
+    # Limpiar espacios en blanco
+    PUBLIC_IP=$(echo "$PUBLIC_IP" | tr -d '[:space:]')
+    
+    if [[ "$PUBLIC_IP" == "localhost" ]] || [[ -z "$PUBLIC_IP" ]]; then
+        PUBLIC_IP=$(hostname -I | awk '{print $1}' 2>/dev/null || echo "localhost")
     fi
+    
+    log_success "IP pública detectada: $PUBLIC_IP"
 }
 
 # Detectar sistema operativo
@@ -275,7 +318,7 @@ SHOUT_EOF
     mkdir -p "$STREAMS_DIR"
     mkdir -p /var/log/icecast2
     
-    log_success "Servidores de streaming instalados"
+    log_success "Servidores de streaming instalados y configurados"
 }
 
 # Crear usuario para la aplicación
@@ -317,7 +360,7 @@ download_application() {
     fi
     
     cd "$INSTALL_DIR"
-    log_success "Aplicación descargada"
+    log_success "Aplicación descargada correctamente"
 }
 
 # Instalar dependencias de la aplicación
@@ -325,15 +368,21 @@ install_app_dependencies() {
     log_info "Instalando dependencias de la aplicación..."
     cd "$INSTALL_DIR"
     npm install
-    log_success "Dependencias instaladas"
+    log_success "Dependencias del frontend instaladas"
+    
+    # Instalar dependencias del backend
+    log_info "Instalando dependencias del backend..."
+    cd "$INSTALL_DIR/backend"
+    npm install
+    log_success "Dependencias del backend instaladas"
 }
 
 # Construir aplicación
 build_application() {
-    log_info "Construyendo aplicación..."
+    log_info "Construyendo aplicación frontend..."
     cd "$INSTALL_DIR"
     npm run build
-    log_success "Aplicación construida"
+    log_success "Aplicación frontend construida"
 }
 
 # Crear backend API
@@ -464,7 +513,7 @@ app.listen(PORT, '0.0.0.0', () => {
 });
 SERVER_EOF
     
-    log_success "Backend API actualizado creado"
+    log_success "Backend API creado y configurado"
 }
 
 # Configurar servicio systemd actualizado
@@ -533,9 +582,9 @@ API_SYSTEMD_EOF
     log_success "Servicios systemd configurados"
 }
 
-# Configurar nginx actualizado
+# Configurar nginx actualizado para puerto 7000
 configure_nginx() {
-    log_info "Configurando nginx para puerto 7000..."
+    log_info "Configurando nginx como proxy reverso para puerto 7000..."
     
     systemctl stop nginx 2>/dev/null || true
     
@@ -544,9 +593,9 @@ configure_nginx() {
     tee "$NGINX_CONFIG" > /dev/null << NGINX_EOF
 server {
     listen 80;
-    server_name localhost $PUBLIC_IP;
+    server_name localhost $PUBLIC_IP _;
     
-    # Frontend
+    # Frontend (Puerto 7000)
     location / {
         proxy_pass http://127.0.0.1:$DEFAULT_PORT;
         proxy_http_version 1.1;
@@ -557,9 +606,10 @@ server {
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_cache_bypass \$http_upgrade;
+        proxy_read_timeout 86400;
     }
     
-    # Backend API
+    # Backend API (Puerto 7001)
     location /api/ {
         proxy_pass http://127.0.0.1:$API_PORT;
         proxy_http_version 1.1;
@@ -570,16 +620,17 @@ server {
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_cache_bypass \$http_upgrade;
+        proxy_read_timeout 86400;
     }
     
-    # Panel de cliente
-    location /client {
-        proxy_pass http://127.0.0.1:$DEFAULT_PORT;
+    # Panel Icecast
+    location /icecast/ {
+        proxy_pass http://127.0.0.1:8000/;
         proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection 'upgrade';
         proxy_set_header Host \$host;
-        proxy_cache_bypass \$http_upgrade;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
     }
     
     access_log /var/log/nginx/geeks-radio.access.log;
@@ -601,7 +652,7 @@ NGINX_EOF
     fi
 }
 
-# Configurar firewall actualizado
+# Configurar firewall para puerto 7000
 configure_firewall() {
     log_info "Configurando firewall para puerto 7000..."
     
@@ -643,28 +694,28 @@ start_services() {
         systemctl start nginx
         
         if systemctl is-active --quiet $SERVICE_NAME; then
-            log_success "Servicio $SERVICE_NAME iniciado"
+            log_success "Servicio $SERVICE_NAME iniciado correctamente"
         else
             log_error "Error al iniciar $SERVICE_NAME"
             systemctl status $SERVICE_NAME --no-pager
         fi
         
         if systemctl is-active --quiet $API_SERVICE_NAME; then
-            log_success "Servicio $API_SERVICE_NAME iniciado"
+            log_success "Servicio $API_SERVICE_NAME iniciado correctamente"
         else
             log_error "Error al iniciar $API_SERVICE_NAME"
             systemctl status $API_SERVICE_NAME --no-pager
         fi
         
         if systemctl is-active --quiet icecast2; then
-            log_success "Servicio icecast2 iniciado"
+            log_success "Servicio icecast2 iniciado correctamente"
         else
             log_error "Error al iniciar icecast2"
             systemctl status icecast2 --no-pager
         fi
         
         if systemctl is-active --quiet nginx; then
-            log_success "Servicio nginx iniciado"
+            log_success "Servicio nginx iniciado correctamente"
         else
             log_error "Error al iniciar nginx"
             systemctl status nginx --no-pager
@@ -676,10 +727,11 @@ start_services() {
     fi
 }
 
-# Crear script de actualización
-create_update_script() {
-    log_info "Creando script de actualización..."
+# Crear scripts adicionales
+create_additional_scripts() {
+    log_info "Creando scripts adicionales de mantenimiento..."
     
+    # Script de actualización
     tee "$INSTALL_DIR/update.sh" > /dev/null << 'UPDATE_EOF'
 #!/bin/bash
 
@@ -687,6 +739,7 @@ create_update_script() {
 
 INSTALL_DIR="/opt/geeks-radio"
 SERVICE_NAME="geeks-radio"
+API_SERVICE_NAME="geeks-radio-api"
 
 log_info() {
     echo "[INFO] $1"
@@ -712,224 +765,34 @@ fi
 log_info "Actualizaciones encontradas, aplicando..."
 
 # Detener servicios
-sudo systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+sudo systemctl stop "$SERVICE_NAME" "$API_SERVICE_NAME" 2>/dev/null || true
 
 # Actualizar código
 git pull origin main
 
 # Instalar dependencias
 npm install
+cd backend && npm install && cd ..
 
 # Construir aplicación
 npm run build
 
 # Reiniciar servicios
-sudo systemctl start "$SERVICE_NAME" 2>/dev/null || true
+sudo systemctl start "$SERVICE_NAME" "$API_SERVICE_NAME" 2>/dev/null || true
 sudo systemctl restart nginx 2>/dev/null || true
 
 log_success "Actualización completada"
 UPDATE_EOF
     
     chmod +x "$INSTALL_DIR/update.sh"
-    log_success "Script de actualización creado"
-}
-
-# Crear scripts adicionales
-create_additional_scripts() {
-    log_info "Creando scripts adicionales..."
-    
-    # Script de monitoreo de streams
-    tee "$INSTALL_DIR/monitor-streams.sh" > /dev/null << 'MONITOR_EOF'
-#!/bin/bash
-
-# Geeks Radio - Monitor de Streams
-# Monitorea el estado de todos los streams activos
-
-INSTALL_DIR="/opt/geeks-radio"
-LOG_FILE="$INSTALL_DIR/logs/monitor.log"
-
-mkdir -p "$INSTALL_DIR/logs"
-
-log_monitor() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
-}
-
-log_monitor "Iniciando monitoreo de streams..."
-
-# Verificar Icecast
-if systemctl is-active --quiet icecast2; then
-    log_monitor "✅ Icecast2 está corriendo"
-    
-    # Obtener estadísticas de Icecast
-    ICECAST_STATS=$(curl -s http://localhost:8000/status-json.xsl 2>/dev/null || echo "Error")
-    if [ "$ICECAST_STATS" != "Error" ]; then
-        log_monitor "📊 Estadísticas Icecast obtenidas"
-    else
-        log_monitor "⚠️  Error al obtener estadísticas de Icecast"
-    fi
-else
-    log_monitor "❌ Icecast2 no está corriendo"
-fi
-
-# Verificar puertos de streaming
-for port in {8000..8020}; do
-    if netstat -tuln | grep -q ":$port "; then
-        log_monitor "🎵 Puerto $port en uso (stream activo)"
-    fi
-done
-
-log_monitor "Monitoreo completado"
-MONITOR_EOF
-    
-    # Script de backup
-    tee "$INSTALL_DIR/backup-system.sh" > /dev/null << 'BACKUP_EOF'
-#!/bin/bash
-
-# Geeks Radio - Sistema de Backup
-# Crea backup completo de configuraciones y base de datos
-
-INSTALL_DIR="/opt/geeks-radio"
-BACKUP_DIR="$INSTALL_DIR/backups"
-DATE=$(date +%Y%m%d_%H%M%S)
-BACKUP_FILE="geeks-radio-backup-$DATE.tar.gz"
-
-mkdir -p "$BACKUP_DIR"
-
-echo "Creando backup del sistema Geeks Radio..."
-
-# Crear directorio temporal
-TEMP_DIR=$(mktemp -d)
-
-# Copiar archivos importantes
-cp -r "$INSTALL_DIR/backend" "$TEMP_DIR/"
-cp -r "$INSTALL_DIR/streams" "$TEMP_DIR/" 2>/dev/null || true
-cp /etc/icecast2/icecast.xml "$TEMP_DIR/" 2>/dev/null || true
-cp /etc/nginx/sites-available/geeks-radio "$TEMP_DIR/" 2>/dev/null || true
-
-# Crear archivo comprimido
-cd "$TEMP_DIR"
-tar -czf "$BACKUP_DIR/$BACKUP_FILE" *
-
-# Limpiar
-rm -rf "$TEMP_DIR"
-
-echo "✅ Backup creado: $BACKUP_DIR/$BACKUP_FILE"
-
-# Mantener solo los últimos 7 backups
-cd "$BACKUP_DIR"
-ls -t geeks-radio-backup-*.tar.gz | tail -n +8 | xargs rm -f 2>/dev/null || true
-
-echo "📦 Backups mantenidos en: $BACKUP_DIR"
-BACKUP_EOF
-    
-    # Script de instalación de AutoDJ
-    tee "$INSTALL_DIR/install-autodj.sh" > /dev/null << 'AUTODJ_EOF'
-#!/bin/bash
-
-# Geeks Radio - Instalador de AutoDJ con Liquidsoap
-# Instala y configura Liquidsoap para AutoDJ
-
-set -e
-
-echo "🎵 Instalando AutoDJ con Liquidsoap..."
-
-# Detectar sistema
-if command -v apt-get >/dev/null 2>&1; then
-    sudo apt-get update
-    sudo apt-get install -y liquidsoap liquidsoap-plugin-all
-elif command -v yum >/dev/null 2>&1; then
-    sudo yum install -y liquidsoap
-elif command -v dnf >/dev/null 2>&1; then
-    sudo dnf install -y liquidsoap
-else
-    echo "❌ Sistema no soportado para AutoDJ"
-    exit 1
-fi
-
-# Crear directorio de música
-MUSIC_DIR="/opt/geeks-radio/music"
-sudo mkdir -p "$MUSIC_DIR"
-
-# Crear configuración básica de Liquidsoap
-sudo tee /opt/geeks-radio/autodj.liq > /dev/null << 'LIQ_EOF'
-#!/usr/bin/liquidsoap
-
-# Configuración básica de AutoDJ para Geeks Radio
-
-# Configurar log
-set("log.file.path", "/var/log/liquidsoap.log")
-set("log.stdout", true)
-
-# Fuente de música (directorio)
-music = playlist("/opt/geeks-radio/music")
-
-# Agregar silencio entre canciones
-music = fallback([music, blank()])
-
-# Configurar salida a Icecast
-output.icecast(
-  %mp3(bitrate=128),
-  host="localhost",
-  port=8000,
-  password="geeksradio2024",
-  mount="autodj",
-  music
-)
-
-# Log de inicio
-log("AutoDJ iniciado para Geeks Radio")
-LIQ_EOF
-
-sudo chmod +x /opt/geeks-radio/autodj.liq
-
-# Crear servicio systemd para AutoDJ
-sudo tee /etc/systemd/system/geeks-autodj.service > /dev/null << 'SERVICE_EOF'
-[Unit]
-Description=Geeks Radio AutoDJ
-After=network.target icecast2.service
-
-[Service]
-Type=simple
-User=liquidsoap
-ExecStart=/usr/bin/liquidsoap /opt/geeks-radio/autodj.liq
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-SERVICE_EOF
-
-# Crear usuario para liquidsoap si no existe
-if ! id "liquidsoap" &>/dev/null; then
-    sudo useradd -r -s /bin/false liquidsoap
-fi
-
-sudo chown -R liquidsoap:liquidsoap /opt/geeks-radio/music
-sudo chown liquidsoap:liquidsoap /opt/geeks-radio/autodj.liq
-
-# Habilitar servicio
-sudo systemctl daemon-reload
-sudo systemctl enable geeks-autodj
-
-echo "✅ AutoDJ instalado correctamente"
-echo "📁 Coloca tu música en: $MUSIC_DIR"
-echo "🎵 Inicia AutoDJ con: sudo systemctl start geeks-autodj"
-echo "📊 Stream disponible en: http://localhost:8000/autodj"
-AUTODJ_EOF
-    
-    # Hacer ejecutables todos los scripts
-    chmod +x "$INSTALL_DIR/monitor-streams.sh"
-    chmod +x "$INSTALL_DIR/backup-system.sh" 
-    chmod +x "$INSTALL_DIR/install-autodj.sh"
-    
     log_success "Scripts adicionales creados"
 }
 
-# Mostrar resumen de instalación actualizado
+# Mostrar resumen de instalación completo
 show_summary() {
     echo ""
     echo -e "${GREEN}╔══════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║                INSTALACIÓN COMPLETADA - PUERTO 7000         ║${NC}"
+    echo -e "${GREEN}║           INSTALACIÓN COMPLETADA - PUERTO 7000              ║${NC}"
     echo -e "${GREEN}╚══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
     
@@ -938,80 +801,86 @@ show_summary() {
     
     LOCAL_IP=$(hostname -I | awk '{print $1}' 2>/dev/null || echo "localhost")
     
-    echo -e "${BLUE}🌐 ACCESOS PÚBLICOS:${NC}"
-    echo -e "   • Panel Principal: ${GREEN}http://$PUBLIC_IP${NC}"
-    echo -e "   • Admin Icecast: ${GREEN}http://$PUBLIC_IP:8000/admin${NC}"
-    echo -e "   • API Backend: ${GREEN}http://$PUBLIC_IP/api${NC}"
+    echo -e "${BLUE}🌐 ACCESOS PRINCIPALES:${NC}"
+    echo -e "   • Panel Web: ${GREEN}http://$PUBLIC_IP${NC}"
+    echo -e "   • Panel Local: ${GREEN}http://localhost${NC}"
+    echo -e "   • Admin Icecast: ${GREEN}http://$PUBLIC_IP/icecast/admin${NC}"
     echo ""
     
-    echo -e "${BLUE}🏠 ACCESOS LOCALES:${NC}"
-    echo -e "   • Panel Local: ${GREEN}http://localhost:7000${NC}"
-    echo -e "   • API Local: ${GREEN}http://localhost:7001/api${NC}"
+    echo -e "${BLUE}🔑 CREDENCIALES DEL SISTEMA:${NC}"
+    echo -e "   • Usuario Admin Panel: ${YELLOW}admin${NC}"
+    echo -e "   • Contraseña Admin Panel: ${YELLOW}geeksradio2024${NC}"
+    echo -e "   • Usuario Icecast Admin: ${YELLOW}admin${NC}"
+    echo -e "   • Contraseña Icecast Admin: ${YELLOW}geeksradio2024${NC}"
+    echo -e "   • Contraseña Fuente Icecast: ${YELLOW}geeksradio2024${NC}"
     echo ""
     
-    echo -e "${BLUE}🔑 CREDENCIALES ADMINISTRADOR:${NC}"
-    echo -e "   • Usuario: ${YELLOW}admin${NC}"
-    echo -e "   • Contraseña: ${YELLOW}geeksradio2024${NC}"
+    echo -e "${BLUE}📡 CONFIGURACIÓN DE PUERTOS:${NC}"
+    echo -e "   • Acceso Web Principal: ${YELLOW}80 → 7000${NC}"
+    echo -e "   • Frontend React: ${YELLOW}7000${NC}"
+    echo -e "   • Backend API: ${YELLOW}7001${NC}"
+    echo -e "   • Icecast Server: ${YELLOW}8000${NC}"
+    echo -e "   • Streams Adicionales: ${YELLOW}8001+${NC}"
     echo ""
     
-    echo -e "${BLUE}🎵 CREDENCIALES ICECAST:${NC}"
-    echo -e "   • Usuario Admin: ${YELLOW}admin${NC}"
-    echo -e "   • Contraseña Admin: ${YELLOW}geeksradio2024${NC}"
-    echo -e "   • Contraseña Fuente: ${YELLOW}geeksradio2024${NC}"
+    echo -e "${BLUE}🚀 SERVICIOS ACTIVOS:${NC}"
+    echo -e "   • ✅ Frontend (Puerto 7000)"
+    echo -e "   • ✅ Backend API (Puerto 7001)"
+    echo -e "   • ✅ Nginx Proxy (Puerto 80)"
+    echo -e "   • ✅ Icecast2 (Puerto 8000)"
+    echo -e "   • ✅ Base de datos SQLite"
     echo ""
     
-    echo -e "${BLUE}📡 PUERTOS CONFIGURADOS:${NC}"
-    echo -e "   • Panel Web: ${YELLOW}80 (proxy a 7000)${NC}"
-    echo -e "   • App Frontend: ${YELLOW}7000${NC}"
-    echo -e "   • API Backend: ${YELLOW}7001${NC}"
-    echo -e "   • Icecast: ${YELLOW}8000${NC}"
-    echo -e "   • Streams: ${YELLOW}8001+${NC}"
+    echo -e "${BLUE}👥 CARACTERÍSTICAS IMPLEMENTADAS:${NC}"
+    echo -e "   • ✅ Panel de administración completo"
+    echo -e "   • ✅ Sistema de gestión de usuarios"
+    echo -e "   • ✅ Panel de clientes independiente"
+    echo -e "   • ✅ Gestión de radios en tiempo real"
+    echo -e "   • ✅ API REST completa con JWT"
+    echo -e "   • ✅ Base de datos con usuarios y perfiles"
+    echo -e "   • ✅ Icecast2 configurado automáticamente"
+    echo -e "   • ✅ Sistema de monitoreo y estadísticas"
     echo ""
     
     echo -e "${BLUE}🔧 COMANDOS ÚTILES:${NC}"
     echo -e "   • Ver logs frontend: ${YELLOW}journalctl -u $SERVICE_NAME -f${NC}"
     echo -e "   • Ver logs API: ${YELLOW}journalctl -u $API_SERVICE_NAME -f${NC}"
-    echo -e "   • Reiniciar sistema: ${YELLOW}systemctl restart $SERVICE_NAME $API_SERVICE_NAME nginx${NC}"
-    echo -e "   • Actualizar: ${YELLOW}$INSTALL_DIR/update.sh${NC}"
+    echo -e "   • Verificar servicios: ${YELLOW}systemctl status $SERVICE_NAME $API_SERVICE_NAME nginx icecast2${NC}"
+    echo -e "   • Reiniciar todo: ${YELLOW}systemctl restart $SERVICE_NAME $API_SERVICE_NAME nginx icecast2${NC}"
+    echo -e "   • Actualizar sistema: ${YELLOW}$INSTALL_DIR/update.sh${NC}"
     echo ""
     
-    echo -e "${BLUE}👥 CARACTERÍSTICAS DEL SISTEMA:${NC}"
-    echo -e "   • ✅ Panel de administración completo"
-    echo -e "   • ✅ Sistema de usuarios y perfiles"
-    echo -e "   • ✅ Panel de clientes independiente"
-    echo -e "   • ✅ Gestión de radios en tiempo real"
-    echo -e "   • ✅ API REST completa"
-    echo -e "   • ✅ Autenticación JWT"
-    echo -e "   • ✅ Base de datos SQLite"
-    echo -e "   • ✅ Icecast2 configurado"
-    echo -e "   • ✅ Sistema de backups"
+    echo -e "${YELLOW}⚠️  IMPORTANTE - PRÓXIMOS PASOS:${NC}"
+    echo -e "   • ${RED}1. Acceder al panel y cambiar credenciales por defecto${NC}"
+    echo -e "   • ${RED}2. Crear usuarios administradores adicionales${NC}"
+    echo -e "   • ${RED}3. Configurar clientes y asignar servicios de radio${NC}"
+    echo -e "   • ${RED}4. Configurar certificados SSL para producción${NC}"
+    echo -e "   • ${RED}5. Personalizar configuraciones según necesidades${NC}"
     echo ""
     
-    echo -e "${YELLOW}⚠️  IMPORTANTE - SEGURIDAD:${NC}"
-    echo -e "   • ${RED}Cambia TODAS las contraseñas inmediatamente${NC}"
-    echo -e "   • ${RED}Accede al panel de usuarios para crear administradores${NC}"
-    echo -e "   • ${RED}Configura certificados SSL para producción${NC}"
+    echo -e "${GREEN}✅ SISTEMA COMPLETAMENTE FUNCIONAL EN:${NC}"
+    echo -e "${GREEN}   🌍 http://$PUBLIC_IP${NC}"
+    echo -e "${GREEN}   🏠 http://localhost${NC}"
     echo ""
     
-    echo -e "${GREEN}✅ Sistema completamente funcional en: http://$PUBLIC_IP${NC}"
+    echo -e "${BLUE}📋 Archivo de logs de instalación: ${YELLOW}$LOG_FILE${NC}"
 }
 
 # Manejo de errores
 handle_error() {
     log_error "Error en línea $1"
-    log_error "La instalación ha fallado"
+    log_error "La instalación ha fallado. Revisa el log: $LOG_FILE"
     exit 1
 }
 
 trap 'handle_error $LINENO' ERR
 
-# Función principal actualizada
+# Función principal
 main() {
-    echo "=== Geeks Radio Install v2.1.0 - $(date) ===" > "$LOG_FILE"
-    
+    setup_logging
     show_banner
     
-    log_info "Iniciando instalación desatendida en puerto 7000..."
+    log_info "Iniciando instalación desatendida completa en puerto 7000..."
     
     check_root
     detect_system
@@ -1028,10 +897,36 @@ main() {
     configure_nginx
     configure_firewall
     start_services
+    create_additional_scripts
     
     show_summary
+    
+    log_success "¡Instalación completada exitosamente!"
 }
 
-# ... keep existing code (command line options)
+# Verificar argumentos de línea de comandos
+case "${1:-}" in
+    --help|-h)
+        echo "Geeks Radio Control Panel - Instalador v2.1.0"
+        echo "Uso: sudo bash install.sh [opciones]"
+        echo ""
+        echo "Opciones:"
+        echo "  --help, -h     Mostrar esta ayuda"
+        echo "  --update       Solo actualizar instalación existente"
+        echo ""
+        echo "Instalación completa en puerto 7000 TCP"
+        exit 0
+        ;;
+    --update)
+        log_info "Modo actualización solamente"
+        check_root
+        cd "$INSTALL_DIR" 2>/dev/null || {
+            log_error "Instalación no encontrada. Ejecuta sin --update para instalar"
+            exit 1
+        }
+        bash update.sh
+        exit 0
+        ;;
+esac
 
 main "$@"
