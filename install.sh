@@ -7,6 +7,9 @@
 
 set -e
 
+# Variables de entorno para instalación desatendida
+export DEBIAN_FRONTEND=noninteractive
+
 # Colores para output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -95,18 +98,34 @@ detect_system() {
     fi
 }
 
+# Configurar instalación desatendida para Icecast
+configure_icecast_unattended() {
+    log_info "Configurando instalación desatendida de Icecast..."
+    
+    case $DISTRO in
+        "ubuntu")
+            # Preconfigurar respuestas para Icecast2
+            echo 'icecast2 icecast2/icecast-setup boolean true' | debconf-set-selections
+            echo 'icecast2 icecast2/hostname string localhost' | debconf-set-selections
+            echo 'icecast2 icecast2/sourcepassword password geeksradio2024' | debconf-set-selections
+            echo 'icecast2 icecast2/relaypassword password geeksradio2024' | debconf-set-selections
+            echo 'icecast2 icecast2/adminpassword password geeksradio2024' | debconf-set-selections
+            ;;
+    esac
+}
+
 # Instalar dependencias del sistema
 install_system_dependencies() {
     log_info "Instalando dependencias del sistema..."
     
     case $DISTRO in
         "ubuntu")
-            sudo apt-get update
-            sudo apt-get install -y curl wget git nginx sqlite3 build-essential python3 python3-pip
+            apt-get update -y
+            apt-get install -y curl wget git nginx sqlite3 build-essential python3 python3-pip debconf-utils
             ;;
         "centos"|"fedora")
-            sudo $PKG_MANAGER update -y
-            sudo $PKG_MANAGER install -y curl wget git nginx sqlite gcc gcc-c++ make python3 python3-pip
+            $PKG_MANAGER update -y
+            $PKG_MANAGER install -y curl wget git nginx sqlite gcc gcc-c++ make python3 python3-pip
             ;;
         "macos")
             if ! command -v brew >/dev/null 2>&1; then
@@ -130,12 +149,12 @@ install_nodejs() {
     else
         case $DISTRO in
             "ubuntu")
-                curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo bash -
-                sudo apt-get install -y nodejs
+                curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+                apt-get install -y nodejs
                 ;;
             "centos"|"fedora")
-                curl -fsSL https://rpm.nodesource.com/setup_lts.x | sudo bash -
-                sudo $PKG_MANAGER install -y nodejs npm
+                curl -fsSL https://rpm.nodesource.com/setup_lts.x | bash -
+                $PKG_MANAGER install -y nodejs npm
                 ;;
             "macos")
                 brew install node npm
@@ -151,23 +170,29 @@ install_nodejs() {
 install_streaming_servers() {
     log_info "Instalando servidores de streaming..."
     
+    # Configurar instalación desatendida antes de instalar
+    configure_icecast_unattended
+    
     # Instalar Icecast2
     case $DISTRO in
         "ubuntu")
-            sudo apt-get update
-            sudo apt-get install -y icecast2
+            apt-get update -y
+            apt-get install -y icecast2
+            # Habilitar Icecast2 automáticamente
+            sed -i 's/ENABLE=false/ENABLE=true/' /etc/default/icecast2 2>/dev/null || true
             ;;
         "centos"|"fedora")
-            sudo $PKG_MANAGER install -y icecast
+            $PKG_MANAGER install -y icecast
             ;;
         "macos")
             brew install icecast
             ;;
     esac
     
-    # Configurar Icecast2
+    # Configurar Icecast2 con configuración personalizada
     log_info "Configurando Icecast2..."
-    sudo tee "$ICECAST_CONFIG_DIR/icecast.xml" > /dev/null << 'ICECAST_EOF'
+    mkdir -p "$ICECAST_CONFIG_DIR"
+    tee "$ICECAST_CONFIG_DIR/icecast.xml" > /dev/null << 'ICECAST_EOF'
 <icecast>
     <location>Earth</location>
     <admin>admin@geeksradio.com</admin>
@@ -178,7 +203,6 @@ install_streaming_servers() {
         <client-timeout>30</client-timeout>
         <header-timeout>15</header-timeout>
         <source-timeout>10</source-timeout>
-        <burst-on-connect>1</burst-on-connect>
         <burst-on-connect>1</burst-on-connect>
         <burst-size>65535</burst-size>
     </limits>
@@ -222,20 +246,20 @@ ICECAST_EOF
     
     # Descargar e instalar SHOUTcast (versión gratuita)
     log_info "Instalando SHOUTcast Server..."
-    sudo mkdir -p "$SHOUTCAST_DIR"
+    mkdir -p "$SHOUTCAST_DIR"
     cd /tmp
     
     if [[ "$DISTRO" != "macos" ]]; then
         # Descargar SHOUTcast para Linux
         wget -q http://download.nullsoft.com/shoutcast/tools/sc_serv2_linux_x64-latest.tar.gz || true
         if [[ -f "sc_serv2_linux_x64-latest.tar.gz" ]]; then
-            sudo tar -xzf sc_serv2_linux_x64-latest.tar.gz -C "$SHOUTCAST_DIR"
-            sudo chmod +x "$SHOUTCAST_DIR/sc_serv"
+            tar -xzf sc_serv2_linux_x64-latest.tar.gz -C "$SHOUTCAST_DIR"
+            chmod +x "$SHOUTCAST_DIR/sc_serv"
         fi
     fi
     
     # Crear configuración básica de SHOUTcast
-    sudo tee "$SHOUTCAST_DIR/sc_serv_basic.conf" > /dev/null << 'SHOUT_EOF'
+    tee "$SHOUTCAST_DIR/sc_serv_basic.conf" > /dev/null << 'SHOUT_EOF'
 ; SHOUTcast server configuration
 password=geeksradio2024
 adminpassword=geeksradio2024
@@ -247,9 +271,9 @@ unique=1
 SHOUT_EOF
     
     # Crear directorios de logs
-    sudo mkdir -p "$SHOUTCAST_DIR/logs"
-    sudo mkdir -p "$STREAMS_DIR"
-    sudo mkdir -p /var/log/icecast2
+    mkdir -p "$SHOUTCAST_DIR/logs"
+    mkdir -p "$STREAMS_DIR"
+    mkdir -p /var/log/icecast2
     
     log_success "Servidores de streaming instalados"
 }
@@ -265,7 +289,7 @@ create_app_user() {
     log_info "Creando usuario para la aplicación..."
     
     if ! id "geeksradio" &>/dev/null; then
-        sudo useradd -r -s /bin/bash -d "$INSTALL_DIR" geeksradio
+        useradd -r -s /bin/bash -d "$INSTALL_DIR" geeksradio
         log_success "Usuario 'geeksradio' creado"
         CREATE_USER=true
     else
@@ -284,7 +308,7 @@ download_application() {
         git pull origin main || {
             log_warning "Error al actualizar, clonando de nuevo..."
             cd /opt
-            sudo rm -rf geeks-radio
+            rm -rf geeks-radio
             git clone "$REPO_URL" geeks-radio
         }
     else
@@ -319,10 +343,10 @@ create_backend_api() {
     cd "$INSTALL_DIR"
     
     # Crear estructura de backend
-    sudo mkdir -p backend/{routes,models,services,config}
+    mkdir -p backend/{routes,models,services,config}
     
     # Crear package.json para backend
-    sudo tee backend/package.json > /dev/null << 'BACKEND_PACKAGE_EOF'
+    tee backend/package.json > /dev/null << 'BACKEND_PACKAGE_EOF'
 {
   "name": "geeks-radio-backend",
   "version": "1.0.0",
@@ -351,7 +375,7 @@ create_backend_api() {
 BACKEND_PACKAGE_EOF
     
     # Crear servidor principal
-    sudo tee backend/server.js > /dev/null << 'SERVER_EOF'
+    tee backend/server.js > /dev/null << 'SERVER_EOF'
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
@@ -432,7 +456,7 @@ configure_systemd_service() {
     
     log_info "Configurando servicio systemd..."
     
-    sudo tee /etc/systemd/system/$SERVICE_NAME.service > /dev/null << SYSTEMD_EOF
+    tee /etc/systemd/system/$SERVICE_NAME.service > /dev/null << SYSTEMD_EOF
 [Unit]
 Description=Geeks Radio Control Panel
 Documentation=https://github.com/kambire/geeks-radio-control-panel
@@ -456,8 +480,8 @@ SyslogIdentifier=geeks-radio
 WantedBy=multi-user.target
 SYSTEMD_EOF
     
-    sudo systemctl daemon-reload
-    sudo systemctl enable $SERVICE_NAME
+    systemctl daemon-reload
+    systemctl enable $SERVICE_NAME
     
     log_success "Servicio systemd configurado"
 }
@@ -467,11 +491,11 @@ configure_nginx() {
     log_info "Configurando nginx..."
     
     # Detener nginx si está corriendo
-    sudo systemctl stop nginx 2>/dev/null || true
+    systemctl stop nginx 2>/dev/null || true
     
     NGINX_CONFIG="/etc/nginx/sites-available/geeks-radio"
     
-    sudo tee "$NGINX_CONFIG" > /dev/null << NGINX_EOF
+    tee "$NGINX_CONFIG" > /dev/null << NGINX_EOF
 server {
     listen 80;
     server_name localhost;
@@ -517,12 +541,12 @@ NGINX_EOF
     
     # Habilitar sitio
     if [[ -d "/etc/nginx/sites-enabled" ]]; then
-        sudo ln -sf "$NGINX_CONFIG" /etc/nginx/sites-enabled/
-        sudo rm -f /etc/nginx/sites-enabled/default
+        ln -sf "$NGINX_CONFIG" /etc/nginx/sites-enabled/
+        rm -f /etc/nginx/sites-enabled/default
     fi
     
     # Verificar configuración
-    if sudo nginx -t; then
+    if nginx -t; then
         log_success "Configuración de nginx creada"
     else
         log_error "Error en la configuración de nginx"
@@ -535,19 +559,19 @@ configure_firewall() {
     log_info "Configurando firewall..."
     
     if command -v ufw >/dev/null 2>&1; then
-        sudo ufw --force enable
-        sudo ufw allow 22/tcp
-        sudo ufw allow 80/tcp
-        sudo ufw allow 443/tcp
-        sudo ufw allow 8000:8100/tcp
+        ufw --force enable
+        ufw allow 22/tcp
+        ufw allow 80/tcp
+        ufw allow 443/tcp
+        ufw allow 8000:8100/tcp
         log_success "Firewall configurado con ufw"
     elif command -v firewall-cmd >/dev/null 2>&1; then
-        sudo systemctl enable firewalld
-        sudo systemctl start firewalld
-        sudo firewall-cmd --permanent --add-port=80/tcp
-        sudo firewall-cmd --permanent --add-port=443/tcp
-        sudo firewall-cmd --permanent --add-port=8000-8100/tcp
-        sudo firewall-cmd --reload
+        systemctl enable firewalld
+        systemctl start firewalld
+        firewall-cmd --permanent --add-port=80/tcp
+        firewall-cmd --permanent --add-port=443/tcp
+        firewall-cmd --permanent --add-port=8000-8100/tcp
+        firewall-cmd --reload
         log_success "Firewall configurado con firewalld"
     else
         log_warning "No se encontró sistema de firewall"
@@ -559,23 +583,32 @@ start_services() {
     log_info "Iniciando servicios..."
     
     if [[ "$CREATE_USER" == true ]] && [[ "$DISTRO" != "macos" ]]; then
-        sudo chown -R geeksradio:geeksradio "$INSTALL_DIR"
+        chown -R geeksradio:geeksradio "$INSTALL_DIR"
         
-        sudo systemctl start $SERVICE_NAME
-        sudo systemctl start nginx
+        systemctl start icecast2
+        systemctl enable icecast2
+        systemctl start $SERVICE_NAME
+        systemctl start nginx
         
-        if sudo systemctl is-active --quiet $SERVICE_NAME; then
+        if systemctl is-active --quiet $SERVICE_NAME; then
             log_success "Servicio $SERVICE_NAME iniciado"
         else
             log_error "Error al iniciar $SERVICE_NAME"
-            sudo systemctl status $SERVICE_NAME --no-pager
+            systemctl status $SERVICE_NAME --no-pager
         fi
         
-        if sudo systemctl is-active --quiet nginx; then
+        if systemctl is-active --quiet nginx; then
             log_success "Servicio nginx iniciado"
         else
             log_error "Error al iniciar nginx"
-            sudo systemctl status nginx --no-pager
+            systemctl status nginx --no-pager
+        fi
+        
+        if systemctl is-active --quiet icecast2; then
+            log_success "Servicio icecast2 iniciado"
+        else
+            log_error "Error al iniciar icecast2"
+            systemctl status icecast2 --no-pager
         fi
     else
         log_info "Iniciando manualmente en macOS o sin usuario dedicado"
@@ -588,7 +621,7 @@ start_services() {
 create_update_script() {
     log_info "Creando script de actualización..."
     
-    sudo tee "$INSTALL_DIR/update.sh" > /dev/null << 'UPDATE_EOF'
+    tee "$INSTALL_DIR/update.sh" > /dev/null << 'UPDATE_EOF'
 #!/bin/bash
 
 # Geeks Radio - Sistema de Actualización
@@ -638,7 +671,7 @@ sudo systemctl restart nginx 2>/dev/null || true
 log_success "Actualización completada"
 UPDATE_EOF
     
-    sudo chmod +x "$INSTALL_DIR/update.sh"
+    chmod +x "$INSTALL_DIR/update.sh"
     log_success "Script de actualización creado"
 }
 
@@ -647,7 +680,7 @@ create_additional_scripts() {
     log_info "Creando scripts adicionales..."
     
     # Script de monitoreo de streams
-    sudo tee "$INSTALL_DIR/monitor-streams.sh" > /dev/null << 'MONITOR_EOF'
+    tee "$INSTALL_DIR/monitor-streams.sh" > /dev/null << 'MONITOR_EOF'
 #!/bin/bash
 
 # Geeks Radio - Monitor de Streams
@@ -690,7 +723,7 @@ log_monitor "Monitoreo completado"
 MONITOR_EOF
     
     # Script de backup
-    sudo tee "$INSTALL_DIR/backup-system.sh" > /dev/null << 'BACKUP_EOF'
+    tee "$INSTALL_DIR/backup-system.sh" > /dev/null << 'BACKUP_EOF'
 #!/bin/bash
 
 # Geeks Radio - Sistema de Backup
@@ -731,7 +764,7 @@ echo "📦 Backups mantenidos en: $BACKUP_DIR"
 BACKUP_EOF
     
     # Script de instalación de AutoDJ
-    sudo tee "$INSTALL_DIR/install-autodj.sh" > /dev/null << 'AUTODJ_EOF'
+    tee "$INSTALL_DIR/install-autodj.sh" > /dev/null << 'AUTODJ_EOF'
 #!/bin/bash
 
 # Geeks Radio - Instalador de AutoDJ con Liquidsoap
@@ -826,9 +859,9 @@ echo "📊 Stream disponible en: http://localhost:8000/autodj"
 AUTODJ_EOF
     
     # Hacer ejecutables todos los scripts
-    sudo chmod +x "$INSTALL_DIR/monitor-streams.sh"
-    sudo chmod +x "$INSTALL_DIR/backup-system.sh" 
-    sudo chmod +x "$INSTALL_DIR/install-autodj.sh"
+    chmod +x "$INSTALL_DIR/monitor-streams.sh"
+    chmod +x "$INSTALL_DIR/backup-system.sh" 
+    chmod +x "$INSTALL_DIR/install-autodj.sh"
     
     log_success "Scripts adicionales creados"
 }
@@ -849,31 +882,47 @@ show_summary() {
     echo -e "${BLUE}🌐 ACCESOS:${NC}"
     echo -e "   • Panel Principal: ${GREEN}http://$LOCAL_IP${NC}"
     echo -e "   • Panel Principal (local): ${GREEN}http://localhost${NC}"
+    echo -e "   • Admin Icecast: ${GREEN}http://$LOCAL_IP:8000/admin${NC}"
+    echo ""
+    
+    echo -e "${BLUE}🔑 CREDENCIALES POR DEFECTO:${NC}"
+    echo -e "   • Usuario Panel: ${YELLOW}admin${NC}"
+    echo -e "   • Contraseña Panel: ${YELLOW}geeksradio2024${NC}"
+    echo -e "   • Usuario Icecast: ${YELLOW}admin${NC}"
+    echo -e "   • Contraseña Icecast: ${YELLOW}geeksradio2024${NC}"
+    echo -e "   • Contraseña Fuente Stream: ${YELLOW}geeksradio2024${NC}"
+    echo ""
+    
+    echo -e "${BLUE}📡 PUERTOS CONFIGURADOS:${NC}"
+    echo -e "   • Panel Web: ${YELLOW}80${NC}"
+    echo -e "   • Icecast: ${YELLOW}8000${NC}"
+    echo -e "   • API Backend: ${YELLOW}3001${NC}"
+    echo -e "   • SHOUTcast: ${YELLOW}8001+${NC}"
     echo ""
     
     echo -e "${BLUE}🔧 COMANDOS ÚTILES:${NC}"
-    echo -e "   • Ver logs: ${YELLOW}sudo journalctl -u $SERVICE_NAME -f${NC}"
-    echo -e "   • Reiniciar: ${YELLOW}sudo systemctl restart $SERVICE_NAME${NC}"
+    echo -e "   • Ver logs: ${YELLOW}journalctl -u $SERVICE_NAME -f${NC}"
+    echo -e "   • Reiniciar: ${YELLOW}systemctl restart $SERVICE_NAME${NC}"
     echo -e "   • Actualizar: ${YELLOW}$INSTALL_DIR/update.sh${NC}"
+    echo -e "   • Monitor streams: ${YELLOW}$INSTALL_DIR/monitor-streams.sh${NC}"
+    echo -e "   • Backup: ${YELLOW}$INSTALL_DIR/backup-system.sh${NC}"
     echo ""
     
-    echo -e "${BLUE}📁 ARCHIVOS:${NC}"
+    echo -e "${BLUE}📁 ARCHIVOS IMPORTANTES:${NC}"
     echo -e "   • Instalación: ${YELLOW}$INSTALL_DIR${NC}"
+    echo -e "   • Base de datos: ${YELLOW}$INSTALL_DIR/backend/geeksradio.db${NC}"
+    echo -e "   • Config Icecast: ${YELLOW}$ICECAST_CONFIG_DIR/icecast.xml${NC}"
+    echo -e "   • Config Nginx: ${YELLOW}/etc/nginx/sites-available/geeks-radio${NC}"
     echo -e "   • Logs: ${YELLOW}$LOG_FILE${NC}"
-    echo -e "   • Configuración Nginx: ${YELLOW}/etc/nginx/sites-available/geeks-radio${NC}"
     echo ""
     
-    if [[ "$CREATE_USER" == true ]]; then
-        echo -e "${BLUE}👤 USUARIO:${NC}"
-        echo -e "   • Usuario del sistema: ${YELLOW}geeksradio${NC}"
-        echo ""
-    fi
-    
-    echo -e "${YELLOW}⚠️  IMPORTANTE:${NC}"
-    echo -e "   • Cambia las credenciales por defecto después del primer acceso"
-    echo -e "   • Configura tu firewall para los puertos necesarios"
-    echo -e "   • Realiza backups regulares de tu configuración"
+    echo -e "${YELLOW}⚠️  IMPORTANTE - CAMBIAR CREDENCIALES:${NC}"
+    echo -e "   • ${RED}Cambia TODAS las contraseñas por defecto inmediatamente${NC}"
+    echo -e "   • ${RED}Configura tu firewall para producción${NC}"
+    echo -e "   • ${RED}Realiza backups regulares de la configuración${NC}"
     echo ""
+    
+    echo -e "${GREEN}✅ Sistema listo para usar en: http://$LOCAL_IP${NC}"
 }
 
 # Manejo de errores
@@ -889,7 +938,7 @@ trap 'handle_error $LINENO' ERR
 main() {
     show_banner
     
-    log_info "Iniciando instalación de Geeks Radio Panel..."
+    log_info "Iniciando instalación DESATENDIDA de Geeks Radio Panel..."
     log_info "Log de instalación: $LOG_FILE"
     
     check_root

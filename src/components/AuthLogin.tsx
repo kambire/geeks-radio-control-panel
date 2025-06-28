@@ -67,7 +67,7 @@ const AuthLogin = ({ onLogin }: AuthLoginProps) => {
                 <Input
                   id="username"
                   type="text"
-                  placeholder="admin"
+                  placeholder="Ingresa tu usuario"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   className="pl-10 bg-slate-700/50 border-slate-600 text-white placeholder:text-slate-400"
@@ -84,7 +84,7 @@ const AuthLogin = ({ onLogin }: AuthLoginProps) => {
                 <Input
                   id="password"
                   type="password"
-                  placeholder="••••••••"
+                  placeholder="Ingresa tu contraseña"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="pl-10 bg-slate-700/50 border-slate-600 text-white placeholder:text-slate-400"
@@ -100,13 +100,6 @@ const AuthLogin = ({ onLogin }: AuthLoginProps) => {
               {isLoading ? "Iniciando sesión..." : "Iniciar Sesión"}
             </Button>
           </form>
-          <div className="mt-4 p-3 bg-slate-700/30 rounded-lg">
-            <p className="text-xs text-slate-400 text-center">
-              Credenciales de prueba:<br />
-              Usuario: <span className="text-orange-400 font-mono">admin</span><br />
-              Contraseña: <span className="text-orange-400 font-mono">geeksradio2024</span>
-            </p>
-          </div>
         </CardContent>
       </Card>
     </div>
