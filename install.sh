@@ -642,6 +642,197 @@ UPDATE_EOF
     log_success "Script de actualización creado"
 }
 
+# Crear scripts adicionales
+create_additional_scripts() {
+    log_info "Creando scripts adicionales..."
+    
+    # Script de monitoreo de streams
+    sudo tee "$INSTALL_DIR/monitor-streams.sh" > /dev/null << 'MONITOR_EOF'
+#!/bin/bash
+
+# Geeks Radio - Monitor de Streams
+# Monitorea el estado de todos los streams activos
+
+INSTALL_DIR="/opt/geeks-radio"
+LOG_FILE="$INSTALL_DIR/logs/monitor.log"
+
+mkdir -p "$INSTALL_DIR/logs"
+
+log_monitor() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
+}
+
+log_monitor "Iniciando monitoreo de streams..."
+
+# Verificar Icecast
+if systemctl is-active --quiet icecast2; then
+    log_monitor "✅ Icecast2 está corriendo"
+    
+    # Obtener estadísticas de Icecast
+    ICECAST_STATS=$(curl -s http://localhost:8000/status-json.xsl 2>/dev/null || echo "Error")
+    if [ "$ICECAST_STATS" != "Error" ]; then
+        log_monitor "📊 Estadísticas Icecast obtenidas"
+    else
+        log_monitor "⚠️  Error al obtener estadísticas de Icecast"
+    fi
+else
+    log_monitor "❌ Icecast2 no está corriendo"
+fi
+
+# Verificar puertos de streaming
+for port in {8000..8020}; do
+    if netstat -tuln | grep -q ":$port "; then
+        log_monitor "🎵 Puerto $port en uso (stream activo)"
+    fi
+done
+
+log_monitor "Monitoreo completado"
+MONITOR_EOF
+    
+    # Script de backup
+    sudo tee "$INSTALL_DIR/backup-system.sh" > /dev/null << 'BACKUP_EOF'
+#!/bin/bash
+
+# Geeks Radio - Sistema de Backup
+# Crea backup completo de configuraciones y base de datos
+
+INSTALL_DIR="/opt/geeks-radio"
+BACKUP_DIR="$INSTALL_DIR/backups"
+DATE=$(date +%Y%m%d_%H%M%S)
+BACKUP_FILE="geeks-radio-backup-$DATE.tar.gz"
+
+mkdir -p "$BACKUP_DIR"
+
+echo "Creando backup del sistema Geeks Radio..."
+
+# Crear directorio temporal
+TEMP_DIR=$(mktemp -d)
+
+# Copiar archivos importantes
+cp -r "$INSTALL_DIR/backend" "$TEMP_DIR/"
+cp -r "$INSTALL_DIR/streams" "$TEMP_DIR/" 2>/dev/null || true
+cp /etc/icecast2/icecast.xml "$TEMP_DIR/" 2>/dev/null || true
+cp /etc/nginx/sites-available/geeks-radio "$TEMP_DIR/" 2>/dev/null || true
+
+# Crear archivo comprimido
+cd "$TEMP_DIR"
+tar -czf "$BACKUP_DIR/$BACKUP_FILE" *
+
+# Limpiar
+rm -rf "$TEMP_DIR"
+
+echo "✅ Backup creado: $BACKUP_DIR/$BACKUP_FILE"
+
+# Mantener solo los últimos 7 backups
+cd "$BACKUP_DIR"
+ls -t geeks-radio-backup-*.tar.gz | tail -n +8 | xargs rm -f 2>/dev/null || true
+
+echo "📦 Backups mantenidos en: $BACKUP_DIR"
+BACKUP_EOF
+    
+    # Script de instalación de AutoDJ
+    sudo tee "$INSTALL_DIR/install-autodj.sh" > /dev/null << 'AUTODJ_EOF'
+#!/bin/bash
+
+# Geeks Radio - Instalador de AutoDJ con Liquidsoap
+# Instala y configura Liquidsoap para AutoDJ
+
+set -e
+
+echo "🎵 Instalando AutoDJ con Liquidsoap..."
+
+# Detectar sistema
+if command -v apt-get >/dev/null 2>&1; then
+    sudo apt-get update
+    sudo apt-get install -y liquidsoap liquidsoap-plugin-all
+elif command -v yum >/dev/null 2>&1; then
+    sudo yum install -y liquidsoap
+elif command -v dnf >/dev/null 2>&1; then
+    sudo dnf install -y liquidsoap
+else
+    echo "❌ Sistema no soportado para AutoDJ"
+    exit 1
+fi
+
+# Crear directorio de música
+MUSIC_DIR="/opt/geeks-radio/music"
+sudo mkdir -p "$MUSIC_DIR"
+
+# Crear configuración básica de Liquidsoap
+sudo tee /opt/geeks-radio/autodj.liq > /dev/null << 'LIQ_EOF'
+#!/usr/bin/liquidsoap
+
+# Configuración básica de AutoDJ para Geeks Radio
+
+# Configurar log
+set("log.file.path", "/var/log/liquidsoap.log")
+set("log.stdout", true)
+
+# Fuente de música (directorio)
+music = playlist("/opt/geeks-radio/music")
+
+# Agregar silencio entre canciones
+music = fallback([music, blank()])
+
+# Configurar salida a Icecast
+output.icecast(
+  %mp3(bitrate=128),
+  host="localhost",
+  port=8000,
+  password="geeksradio2024",
+  mount="autodj",
+  music
+)
+
+# Log de inicio
+log("AutoDJ iniciado para Geeks Radio")
+LIQ_EOF
+
+sudo chmod +x /opt/geeks-radio/autodj.liq
+
+# Crear servicio systemd para AutoDJ
+sudo tee /etc/systemd/system/geeks-autodj.service > /dev/null << 'SERVICE_EOF'
+[Unit]
+Description=Geeks Radio AutoDJ
+After=network.target icecast2.service
+
+[Service]
+Type=simple
+User=liquidsoap
+ExecStart=/usr/bin/liquidsoap /opt/geeks-radio/autodj.liq
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+SERVICE_EOF
+
+# Crear usuario para liquidsoap si no existe
+if ! id "liquidsoap" &>/dev/null; then
+    sudo useradd -r -s /bin/false liquidsoap
+fi
+
+sudo chown -R liquidsoap:liquidsoap /opt/geeks-radio/music
+sudo chown liquidsoap:liquidsoap /opt/geeks-radio/autodj.liq
+
+# Habilitar servicio
+sudo systemctl daemon-reload
+sudo systemctl enable geeks-autodj
+
+echo "✅ AutoDJ instalado correctamente"
+echo "📁 Coloca tu música en: $MUSIC_DIR"
+echo "🎵 Inicia AutoDJ con: sudo systemctl start geeks-autodj"
+echo "📊 Stream disponible en: http://localhost:8000/autodj"
+AUTODJ_EOF
+    
+    # Hacer ejecutables todos los scripts
+    sudo chmod +x "$INSTALL_DIR/monitor-streams.sh"
+    sudo chmod +x "$INSTALL_DIR/backup-system.sh" 
+    sudo chmod +x "$INSTALL_DIR/install-autodj.sh"
+    
+    log_success "Scripts adicionales creados"
+}
+
 # Mostrar resumen de instalación
 show_summary() {
     echo ""
@@ -711,6 +902,7 @@ main() {
     install_app_dependencies
     build_application
     create_backend_api
+    create_additional_scripts
     configure_systemd_service
     configure_nginx
     configure_firewall
