@@ -118,6 +118,13 @@ class ApiService {
     });
   }
 
+  async updateRadioStatus(radioId: number, status: string): Promise<ApiResponse<Radio>> {
+    return this.request(`/radios/${radioId}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    });
+  }
+
   async deleteRadio(id: number): Promise<ApiResponse> {
     return this.request(`/radios/${id}`, { method: 'DELETE' });
   }
