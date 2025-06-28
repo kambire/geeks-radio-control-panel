@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Radio, Lock, User } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
+import { apiService } from "@/services/api";
 
 interface AuthLoginProps {
   onLogin: () => void;
@@ -20,25 +21,23 @@ const AuthLogin = ({ onLogin }: AuthLoginProps) => {
     e.preventDefault();
     setIsLoading(true);
 
-    // Simular autenticación - en producción conectar con backend real
-    if (username === "admin" && password === "geeksradio2024") {
-      setTimeout(() => {
-        toast({
-          title: "Login exitoso",
-          description: "Bienvenido al panel de administración",
-        });
-        onLogin();
-        setIsLoading(false);
-      }, 1000);
-    } else {
-      setTimeout(() => {
-        toast({
-          title: "Error de autenticación",
-          description: "Usuario o contraseña incorrectos",
-          variant: "destructive",
-        });
-        setIsLoading(false);
-      }, 1000);
+    try {
+      const response = await apiService.login({ username, password });
+      
+      toast({
+        title: "Login exitoso",
+        description: `Bienvenido, ${response.user.full_name || response.user.username}`,
+      });
+      
+      onLogin();
+    } catch (error) {
+      toast({
+        title: "Error de autenticación",
+        description: error instanceof Error ? error.message : "Credenciales incorrectas",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -100,6 +99,13 @@ const AuthLogin = ({ onLogin }: AuthLoginProps) => {
               {isLoading ? "Iniciando sesión..." : "Iniciar Sesión"}
             </Button>
           </form>
+          
+          <div className="mt-6 p-4 bg-slate-700/50 rounded-lg">
+            <h4 className="text-white font-semibold mb-2 text-center">Acceso al Sistema</h4>
+            <p className="text-slate-300 text-sm text-center">
+              Las credenciales serán proporcionadas por el administrador del sistema después de la instalación.
+            </p>
+          </div>
         </CardContent>
       </Card>
     </div>

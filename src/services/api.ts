@@ -1,211 +1,183 @@
 
-// API service for Geeks Radio Control Panel
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
-
-export interface ApiResponse<T = any> {
-  data?: T;
-  error?: string;
-  message?: string;
-}
-
-export interface Radio {
-  id: number;
-  name: string;
-  client_id: number;
-  plan_id: number;
-  server_type: 'icecast' | 'shoutcast';
-  port: number;
-  max_listeners: number;
-  bitrate: number;
-  autodj_enabled: boolean;
-  mount_point: string;
-  source_password: string;
-  admin_password: string;
-  status: 'active' | 'inactive' | 'maintenance';
-  current_listeners: number;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface Client {
-  id: number;
-  name: string;
-  email: string;
-  phone: string;
-  company: string;
-  address: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface Plan {
-  id: number;
-  name: string;
-  max_listeners: number;
-  storage_gb: number;
-  bandwidth_gb: number;
-  price: number;
-  features: string[];
-  created_at: string;
-  updated_at: string;
-}
-
-export interface StreamStats {
-  radio_id: number;
-  listeners: number;
-  peak_listeners: number;
-  bitrate: number;
-  status: string;
-  uptime: string;
-  song: string;
-}
-
 class ApiService {
-  private async request<T>(endpoint: string, options?: RequestInit): Promise<ApiResponse<T>> {
-    try {
-      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-        headers: {
-          'Content-Type': 'application/json',
-          ...options?.headers,
-        },
-        ...options,
-      });
+  private baseURL: string;
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-      return { data };
-    } catch (error) {
-      console.error('API request failed:', error);
-      return { error: error instanceof Error ? error.message : 'Unknown error occurred' };
-    }
+  constructor() {
+    this.baseURL = import.meta.env.VITE_API_URL || '/api';
   }
 
-  // Auth endpoints
-  async login(credentials: { username: string; password: string }): Promise<ApiResponse<{ token: string; user: any }>> {
-    return this.request('/auth/login', {
+  private getAuthHeaders() {
+    const token = localStorage.getItem('token');
+    return {
+      'Content-Type': 'application/json',
+      ...(token && { 'Authorization': `Bearer ${token}` })
+    };
+  }
+
+  private async request(endpoint: string, options: RequestInit = {}) {
+    const url = `${this.baseURL}${endpoint}`;
+    const config = {
+      headers: this.getAuthHeaders(),
+      ...options,
+    };
+
+    const response = await fetch(url, config);
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        localStorage.removeItem('token');
+        window.location.reload();
+        return;
+      }
+      
+      const error = await response.json().catch(() => ({ error: 'Error desconocido' }));
+      throw new Error(error.error || `HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  // Autenticación
+  async login(credentials: { username: string; password: string }) {
+    const response = await fetch(`${this.baseURL}/auth/login`, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(credentials),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Error de autenticación');
+    }
+
+    const data = await response.json();
+    localStorage.setItem('token', data.token);
+    return data;
+  }
+
+  async logout() {
+    localStorage.removeItem('token');
+  }
+
+  // Perfil de usuario
+  async getProfile() {
+    return this.request('/profile');
+  }
+
+  async updateProfile(profileData: any) {
+    return this.request('/profile', {
+      method: 'PUT',
+      body: JSON.stringify(profileData),
     });
   }
 
-  async logout(): Promise<ApiResponse> {
-    return this.request('/auth/logout', { method: 'POST' });
+  // Usuarios (solo admin)
+  async getUsers() {
+    return this.request('/users');
   }
 
-  // Radio endpoints
-  async getRadios(): Promise<ApiResponse<Radio[]>> {
+  async createUser(userData: any) {
+    return this.request('/users', {
+      method: 'POST',
+      body: JSON.stringify(userData),
+    });
+  }
+
+  async updateUser(userId: number, userData: any) {
+    return this.request(`/users/${userId}`, {
+      method: 'PUT',
+      body: JSON.stringify(userData),
+    });
+  }
+
+  async deleteUser(userId: number) {
+    return this.request(`/users/${userId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // Dashboard
+  async getAdminDashboard() {
+    return this.request('/dashboard/admin');
+  }
+
+  async getClientDashboard() {
+    return this.request('/dashboard/client');
+  }
+
+  // Radios
+  async getRadios() {
     return this.request('/radios');
   }
 
-  async getRadio(id: number): Promise<ApiResponse<Radio>> {
-    return this.request(`/radios/${id}`);
-  }
-
-  async createRadio(radio: Partial<Radio>): Promise<ApiResponse<Radio>> {
+  async createRadio(radioData: any) {
     return this.request('/radios', {
       method: 'POST',
-      body: JSON.stringify(radio),
+      body: JSON.stringify(radioData),
     });
   }
 
-  async updateRadio(id: number, radio: Partial<Radio>): Promise<ApiResponse<Radio>> {
-    return this.request(`/radios/${id}`, {
+  async updateRadio(radioId: number, radioData: any) {
+    return this.request(`/radios/${radioId}`, {
       method: 'PUT',
-      body: JSON.stringify(radio),
+      body: JSON.stringify(radioData),
     });
   }
 
-  async updateRadioStatus(radioId: number, status: string): Promise<ApiResponse<Radio>> {
+  async updateRadioStatus(radioId: number, status: string) {
     return this.request(`/radios/${radioId}/status`, {
-      method: 'PATCH',
+      method: 'PUT',
       body: JSON.stringify({ status }),
     });
   }
 
-  async deleteRadio(id: number): Promise<ApiResponse> {
-    return this.request(`/radios/${id}`, { method: 'DELETE' });
+  async deleteRadio(radioId: number) {
+    return this.request(`/radios/${radioId}`, {
+      method: 'DELETE',
+    });
   }
 
-  // Client endpoints
-  async getClients(): Promise<ApiResponse<Client[]>> {
-    return this.request('/clients');
+  // Clientes (deprecated - now using users)
+  async getClients() {
+    return this.request('/users');
   }
 
-  async getClient(id: number): Promise<ApiResponse<Client>> {
-    return this.request(`/clients/${id}`);
-  }
-
-  async createClient(client: Partial<Client>): Promise<ApiResponse<Client>> {
-    return this.request('/clients', {
+  async createClient(clientData: any) {
+    return this.request('/users', {
       method: 'POST',
-      body: JSON.stringify(client),
+      body: JSON.stringify({ ...clientData, role: 'client' }),
     });
   }
 
-  async updateClient(id: number, client: Partial<Client>): Promise<ApiResponse<Client>> {
-    return this.request(`/clients/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(client),
-    });
-  }
-
-  async deleteClient(id: number): Promise<ApiResponse> {
-    return this.request(`/clients/${id}`, { method: 'DELETE' });
-  }
-
-  // Plan endpoints
-  async getPlans(): Promise<ApiResponse<Plan[]>> {
+  // Planes
+  async getPlans() {
     return this.request('/plans');
   }
 
-  async getPlan(id: number): Promise<ApiResponse<Plan>> {
-    return this.request(`/plans/${id}`);
-  }
-
-  async createPlan(plan: Partial<Plan>): Promise<ApiResponse<Plan>> {
+  async createPlan(planData: any) {
     return this.request('/plans', {
       method: 'POST',
-      body: JSON.stringify(plan),
+      body: JSON.stringify(planData),
     });
   }
 
-  async updatePlan(id: number, plan: Partial<Plan>): Promise<ApiResponse<Plan>> {
-    return this.request(`/plans/${id}`, {
+  async updatePlan(planId: number, planData: any) {
+    return this.request(`/plans/${planId}`, {
       method: 'PUT',
-      body: JSON.stringify(plan),
+      body: JSON.stringify(planData),
     });
   }
 
-  async deletePlan(id: number): Promise<ApiResponse> {
-    return this.request(`/plans/${id}`, { method: 'DELETE' });
+  async deletePlan(planId: number) {
+    return this.request(`/plans/${planId}`, {
+      method: 'DELETE',
+    });
   }
 
-  // Stream endpoints
-  async getStreamStats(radioId?: number): Promise<ApiResponse<StreamStats[]>> {
-    const endpoint = radioId ? `/streams/stats/${radioId}` : '/streams/stats';
-    return this.request(endpoint);
-  }
-
-  async startStream(radioId: number): Promise<ApiResponse> {
-    return this.request(`/streams/start/${radioId}`, { method: 'POST' });
-  }
-
-  async stopStream(radioId: number): Promise<ApiResponse> {
-    return this.request(`/streams/stop/${radioId}`, { method: 'POST' });
-  }
-
-  async restartStream(radioId: number): Promise<ApiResponse> {
-    return this.request(`/streams/restart/${radioId}`, { method: 'POST' });
-  }
-
-  // Health check
-  async health(): Promise<ApiResponse<{ status: string; timestamp: string; uptime: number }>> {
-    return this.request('/health');
+  // Estadísticas de streams
+  async getStreamStats() {
+    return this.request('/streams/stats');
   }
 }
 
 export const apiService = new ApiService();
-export default apiService;

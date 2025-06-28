@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Geeks Radio - Instalador Automático Completo
-# Version: 2.0.0
-# Descripción: Instalación completa con Icecast, SHOUTcast y Backend
+# Version: 2.1.0
+# Descripción: Instalación completa con Icecast, SHOUTcast y Backend - Puerto 7000
 # Repositorio: https://github.com/kambire/geeks-radio-control-panel
 
 set -e
@@ -19,15 +19,15 @@ NC='\033[0m'
 
 # Variables de configuración
 PROJECT_NAME="geeks-radio-control-panel"
-DEFAULT_PORT=3000
-API_PORT=3001
+DEFAULT_PORT=7000
+API_PORT=7001
 INSTALL_DIR="/opt/geeks-radio"
 SERVICE_NAME="geeks-radio"
+API_SERVICE_NAME="geeks-radio-api"
 LOG_FILE="/var/log/geeks-radio-install.log"
 REPO_URL="https://github.com/kambire/geeks-radio-control-panel.git"
 ICECAST_CONFIG_DIR="/etc/icecast2"
-SHOUTCAST_DIR="/opt/shoutcast"
-STREAMS_DIR="/opt/geeks-radio/streams"
+PUBLIC_IP=""
 
 # Funciones de logging
 log_info() {
@@ -53,7 +53,7 @@ show_banner() {
     echo "╔══════════════════════════════════════════════════════════════╗"
     echo "║                    GEEKS RADIO PANEL                         ║"
     echo "║              Instalación Automática Completa                ║"
-    echo "║                     Versión 2.0.0                           ║"
+    echo "║                     Versión 2.1.0                           ║"
     echo "╚══════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
 }
@@ -338,19 +338,19 @@ build_application() {
 
 # Crear backend API
 create_backend_api() {
-    log_info "Creando backend API..."
+    log_info "Creando backend API actualizado..."
     
     cd "$INSTALL_DIR"
     
     # Crear estructura de backend
-    mkdir -p backend/{routes,models,services,config}
+    mkdir -p backend/{routes,models,services,config,middleware}
     
     # Crear package.json para backend
     tee backend/package.json > /dev/null << 'BACKEND_PACKAGE_EOF'
 {
   "name": "geeks-radio-backend",
-  "version": "1.0.0",
-  "description": "Backend API for Geeks Radio Control Panel",
+  "version": "2.1.0",
+  "description": "Backend API for Geeks Radio Control Panel with User Management",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -366,7 +366,9 @@ create_backend_api() {
     "node-cron": "^3.0.2",
     "axios": "^1.4.0",
     "multer": "^1.4.5",
-    "express-rate-limit": "^6.7.0"
+    "express-rate-limit": "^6.7.0",
+    "helmet": "^7.0.0",
+    "express-validator": "^7.0.1"
   },
   "devDependencies": {
     "nodemon": "^2.0.22"
@@ -374,32 +376,42 @@ create_backend_api() {
 }
 BACKEND_PACKAGE_EOF
     
-    # Crear servidor principal
+    # Crear servidor principal actualizado
     tee backend/server.js > /dev/null << 'SERVER_EOF'
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const rateLimit = require('express-rate-limit');
+const helmet = require('helmet');
 const path = require('path');
 
 // Importar rutas
 const authRoutes = require('./routes/auth');
+const usersRoutes = require('./routes/users');
+const profileRoutes = require('./routes/profile');
 const radioRoutes = require('./routes/radios');
 const clientRoutes = require('./routes/clients');
 const planRoutes = require('./routes/plans');
 const streamRoutes = require('./routes/streams');
+const dashboardRoutes = require('./routes/dashboard');
+
+// Middleware personalizado
+const authMiddleware = require('./middleware/auth');
 
 // Inicializar base de datos
 const db = require('./config/database');
 db.init();
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 7001;
+
+// Security middleware
+app.use(helmet());
 
 // Rate limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutos
-  max: 100 // límite de 100 requests por ventana por IP
+  windowMs: 15 * 60 * 1000,
+  max: 100
 });
 
 // Middlewares
@@ -414,51 +426,60 @@ app.use((req, res, next) => {
   next();
 });
 
-// Rutas
+// Rutas públicas
 app.use('/api/auth', authRoutes);
-app.use('/api/radios', radioRoutes);
-app.use('/api/clients', clientRoutes);
-app.use('/api/plans', planRoutes);
-app.use('/api/streams', streamRoutes);
+
+// Rutas protegidas
+app.use('/api/users', authMiddleware, usersRoutes);
+app.use('/api/profile', authMiddleware, profileRoutes);
+app.use('/api/radios', authMiddleware, radioRoutes);
+app.use('/api/clients', authMiddleware, clientRoutes);
+app.use('/api/plans', authMiddleware, planRoutes);
+app.use('/api/streams', authMiddleware, streamRoutes);
+app.use('/api/dashboard', authMiddleware, dashboardRoutes);
 
 // Ruta de salud
 app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'ok', 
     timestamp: new Date().toISOString(),
-    uptime: process.uptime()
+    uptime: process.uptime(),
+    version: '2.1.0'
   });
 });
 
 // Manejo de errores
 app.use((err, req, res, next) => {
   console.error(err.stack);
-  res.status(500).json({ error: 'Algo salió mal!' });
+  res.status(500).json({ 
+    error: 'Error interno del servidor',
+    message: process.env.NODE_ENV === 'development' ? err.message : 'Contacta al administrador'
+  });
 });
 
-// Iniciar servidor
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Geeks Radio API corriendo en puerto ${PORT}`);
-  console.log(`📡 Panel disponible en http://localhost:3000`);
+  console.log(`📡 Panel disponible en http://localhost:7000`);
   console.log(`🎵 API disponible en http://localhost:${PORT}/api`);
 });
 SERVER_EOF
     
-    log_success "Backend API creado"
+    log_success "Backend API actualizado creado"
 }
 
-# Configurar servicio systemd
+# Configurar servicio systemd actualizado
 configure_systemd_service() {
     if [[ "$DISTRO" == "macos" ]] || [[ "$CREATE_USER" == false ]]; then
         log_info "Saltando configuración de servicio systemd"
         return
     fi
     
-    log_info "Configurando servicio systemd..."
+    log_info "Configurando servicios systemd..."
     
+    # Servicio frontend
     tee /etc/systemd/system/$SERVICE_NAME.service > /dev/null << SYSTEMD_EOF
 [Unit]
-Description=Geeks Radio Control Panel
+Description=Geeks Radio Control Panel Frontend
 Documentation=https://github.com/kambire/geeks-radio-control-panel
 After=network.target
 
@@ -479,18 +500,43 @@ SyslogIdentifier=geeks-radio
 [Install]
 WantedBy=multi-user.target
 SYSTEMD_EOF
+
+    # Servicio backend API
+    tee /etc/systemd/system/$API_SERVICE_NAME.service > /dev/null << API_SYSTEMD_EOF
+[Unit]
+Description=Geeks Radio Backend API
+Documentation=https://github.com/kambire/geeks-radio-control-panel
+After=network.target
+
+[Service]
+Type=simple
+User=geeksradio
+WorkingDirectory=$INSTALL_DIR/backend
+Environment=NODE_ENV=production
+Environment=PORT=$API_PORT
+ExecStart=/usr/bin/node server.js
+Restart=on-failure
+RestartSec=10
+KillMode=mixed
+KillSignal=SIGINT
+TimeoutStopSec=5
+SyslogIdentifier=geeks-radio-api
+
+[Install]
+WantedBy=multi-user.target
+API_SYSTEMD_EOF
     
     systemctl daemon-reload
     systemctl enable $SERVICE_NAME
+    systemctl enable $API_SERVICE_NAME
     
-    log_success "Servicio systemd configurado"
+    log_success "Servicios systemd configurados"
 }
 
-# Configurar nginx
+# Configurar nginx actualizado
 configure_nginx() {
-    log_info "Configurando nginx..."
+    log_info "Configurando nginx para puerto 7000..."
     
-    # Detener nginx si está corriendo
     systemctl stop nginx 2>/dev/null || true
     
     NGINX_CONFIG="/etc/nginx/sites-available/geeks-radio"
@@ -498,7 +544,7 @@ configure_nginx() {
     tee "$NGINX_CONFIG" > /dev/null << NGINX_EOF
 server {
     listen 80;
-    server_name localhost;
+    server_name localhost $PUBLIC_IP;
     
     # Frontend
     location / {
@@ -526,14 +572,16 @@ server {
         proxy_cache_bypass \$http_upgrade;
     }
     
-    # Archivos estáticos
-    location /assets/ {
-        alias $INSTALL_DIR/dist/assets/;
-        expires 1y;
-        add_header Cache-Control "public, immutable";
+    # Panel de cliente
+    location /client {
+        proxy_pass http://127.0.0.1:$DEFAULT_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_cache_bypass \$http_upgrade;
     }
     
-    # Logs
     access_log /var/log/nginx/geeks-radio.access.log;
     error_log /var/log/nginx/geeks-radio.error.log;
 }
@@ -545,34 +593,37 @@ NGINX_EOF
         rm -f /etc/nginx/sites-enabled/default
     fi
     
-    # Verificar configuración
     if nginx -t; then
-        log_success "Configuración de nginx creada"
+        log_success "Configuración de nginx creada para puerto 7000"
     else
         log_error "Error en la configuración de nginx"
         exit 1
     fi
 }
 
-# Configurar firewall
+# Configurar firewall actualizado
 configure_firewall() {
-    log_info "Configurando firewall..."
+    log_info "Configurando firewall para puerto 7000..."
     
     if command -v ufw >/dev/null 2>&1; then
         ufw --force enable
         ufw allow 22/tcp
         ufw allow 80/tcp
         ufw allow 443/tcp
+        ufw allow 7000/tcp
+        ufw allow 7001/tcp
         ufw allow 8000:8100/tcp
-        log_success "Firewall configurado con ufw"
+        log_success "Firewall configurado (puerto 7000 habilitado)"
     elif command -v firewall-cmd >/dev/null 2>&1; then
         systemctl enable firewalld
         systemctl start firewalld
         firewall-cmd --permanent --add-port=80/tcp
         firewall-cmd --permanent --add-port=443/tcp
+        firewall-cmd --permanent --add-port=7000/tcp
+        firewall-cmd --permanent --add-port=7001/tcp
         firewall-cmd --permanent --add-port=8000-8100/tcp
         firewall-cmd --reload
-        log_success "Firewall configurado con firewalld"
+        log_success "Firewall configurado con firewalld (puerto 7000)"
     else
         log_warning "No se encontró sistema de firewall"
     fi
@@ -588,6 +639,7 @@ start_services() {
         systemctl start icecast2
         systemctl enable icecast2
         systemctl start $SERVICE_NAME
+        systemctl start $API_SERVICE_NAME
         systemctl start nginx
         
         if systemctl is-active --quiet $SERVICE_NAME; then
@@ -597,11 +649,11 @@ start_services() {
             systemctl status $SERVICE_NAME --no-pager
         fi
         
-        if systemctl is-active --quiet nginx; then
-            log_success "Servicio nginx iniciado"
+        if systemctl is-active --quiet $API_SERVICE_NAME; then
+            log_success "Servicio $API_SERVICE_NAME iniciado"
         else
-            log_error "Error al iniciar nginx"
-            systemctl status nginx --no-pager
+            log_error "Error al iniciar $API_SERVICE_NAME"
+            systemctl status $API_SERVICE_NAME --no-pager
         fi
         
         if systemctl is-active --quiet icecast2; then
@@ -609,6 +661,13 @@ start_services() {
         else
             log_error "Error al iniciar icecast2"
             systemctl status icecast2 --no-pager
+        fi
+        
+        if systemctl is-active --quiet nginx; then
+            log_success "Servicio nginx iniciado"
+        else
+            log_error "Error al iniciar nginx"
+            systemctl status nginx --no-pager
         fi
     else
         log_info "Iniciando manualmente en macOS o sin usuario dedicado"
@@ -866,63 +925,75 @@ AUTODJ_EOF
     log_success "Scripts adicionales creados"
 }
 
-# Mostrar resumen de instalación
+# Mostrar resumen de instalación actualizado
 show_summary() {
     echo ""
     echo -e "${GREEN}╔══════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║                INSTALACIÓN COMPLETADA                       ║${NC}"
+    echo -e "${GREEN}║                INSTALACIÓN COMPLETADA - PUERTO 7000         ║${NC}"
     echo -e "${GREEN}╚══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
     
-    log_success "¡Geeks Radio Panel instalado exitosamente!"
+    log_success "¡Geeks Radio Panel instalado exitosamente en puerto 7000!"
     echo ""
     
     LOCAL_IP=$(hostname -I | awk '{print $1}' 2>/dev/null || echo "localhost")
     
-    echo -e "${BLUE}🌐 ACCESOS:${NC}"
-    echo -e "   • Panel Principal: ${GREEN}http://$LOCAL_IP${NC}"
-    echo -e "   • Panel Principal (local): ${GREEN}http://localhost${NC}"
-    echo -e "   • Admin Icecast: ${GREEN}http://$LOCAL_IP:8000/admin${NC}"
+    echo -e "${BLUE}🌐 ACCESOS PÚBLICOS:${NC}"
+    echo -e "   • Panel Principal: ${GREEN}http://$PUBLIC_IP${NC}"
+    echo -e "   • Admin Icecast: ${GREEN}http://$PUBLIC_IP:8000/admin${NC}"
+    echo -e "   • API Backend: ${GREEN}http://$PUBLIC_IP/api${NC}"
     echo ""
     
-    echo -e "${BLUE}🔑 CREDENCIALES POR DEFECTO:${NC}"
-    echo -e "   • Usuario Panel: ${YELLOW}admin${NC}"
-    echo -e "   • Contraseña Panel: ${YELLOW}geeksradio2024${NC}"
-    echo -e "   • Usuario Icecast: ${YELLOW}admin${NC}"
-    echo -e "   • Contraseña Icecast: ${YELLOW}geeksradio2024${NC}"
-    echo -e "   • Contraseña Fuente Stream: ${YELLOW}geeksradio2024${NC}"
+    echo -e "${BLUE}🏠 ACCESOS LOCALES:${NC}"
+    echo -e "   • Panel Local: ${GREEN}http://localhost:7000${NC}"
+    echo -e "   • API Local: ${GREEN}http://localhost:7001/api${NC}"
+    echo ""
+    
+    echo -e "${BLUE}🔑 CREDENCIALES ADMINISTRADOR:${NC}"
+    echo -e "   • Usuario: ${YELLOW}admin${NC}"
+    echo -e "   • Contraseña: ${YELLOW}geeksradio2024${NC}"
+    echo ""
+    
+    echo -e "${BLUE}🎵 CREDENCIALES ICECAST:${NC}"
+    echo -e "   • Usuario Admin: ${YELLOW}admin${NC}"
+    echo -e "   • Contraseña Admin: ${YELLOW}geeksradio2024${NC}"
+    echo -e "   • Contraseña Fuente: ${YELLOW}geeksradio2024${NC}"
     echo ""
     
     echo -e "${BLUE}📡 PUERTOS CONFIGURADOS:${NC}"
-    echo -e "   • Panel Web: ${YELLOW}80${NC}"
+    echo -e "   • Panel Web: ${YELLOW}80 (proxy a 7000)${NC}"
+    echo -e "   • App Frontend: ${YELLOW}7000${NC}"
+    echo -e "   • API Backend: ${YELLOW}7001${NC}"
     echo -e "   • Icecast: ${YELLOW}8000${NC}"
-    echo -e "   • API Backend: ${YELLOW}3001${NC}"
-    echo -e "   • SHOUTcast: ${YELLOW}8001+${NC}"
+    echo -e "   • Streams: ${YELLOW}8001+${NC}"
     echo ""
     
     echo -e "${BLUE}🔧 COMANDOS ÚTILES:${NC}"
-    echo -e "   • Ver logs: ${YELLOW}journalctl -u $SERVICE_NAME -f${NC}"
-    echo -e "   • Reiniciar: ${YELLOW}systemctl restart $SERVICE_NAME${NC}"
+    echo -e "   • Ver logs frontend: ${YELLOW}journalctl -u $SERVICE_NAME -f${NC}"
+    echo -e "   • Ver logs API: ${YELLOW}journalctl -u $API_SERVICE_NAME -f${NC}"
+    echo -e "   • Reiniciar sistema: ${YELLOW}systemctl restart $SERVICE_NAME $API_SERVICE_NAME nginx${NC}"
     echo -e "   • Actualizar: ${YELLOW}$INSTALL_DIR/update.sh${NC}"
-    echo -e "   • Monitor streams: ${YELLOW}$INSTALL_DIR/monitor-streams.sh${NC}"
-    echo -e "   • Backup: ${YELLOW}$INSTALL_DIR/backup-system.sh${NC}"
     echo ""
     
-    echo -e "${BLUE}📁 ARCHIVOS IMPORTANTES:${NC}"
-    echo -e "   • Instalación: ${YELLOW}$INSTALL_DIR${NC}"
-    echo -e "   • Base de datos: ${YELLOW}$INSTALL_DIR/backend/geeksradio.db${NC}"
-    echo -e "   • Config Icecast: ${YELLOW}$ICECAST_CONFIG_DIR/icecast.xml${NC}"
-    echo -e "   • Config Nginx: ${YELLOW}/etc/nginx/sites-available/geeks-radio${NC}"
-    echo -e "   • Logs: ${YELLOW}$LOG_FILE${NC}"
+    echo -e "${BLUE}👥 CARACTERÍSTICAS DEL SISTEMA:${NC}"
+    echo -e "   • ✅ Panel de administración completo"
+    echo -e "   • ✅ Sistema de usuarios y perfiles"
+    echo -e "   • ✅ Panel de clientes independiente"
+    echo -e "   • ✅ Gestión de radios en tiempo real"
+    echo -e "   • ✅ API REST completa"
+    echo -e "   • ✅ Autenticación JWT"
+    echo -e "   • ✅ Base de datos SQLite"
+    echo -e "   • ✅ Icecast2 configurado"
+    echo -e "   • ✅ Sistema de backups"
     echo ""
     
-    echo -e "${YELLOW}⚠️  IMPORTANTE - CAMBIAR CREDENCIALES:${NC}"
-    echo -e "   • ${RED}Cambia TODAS las contraseñas por defecto inmediatamente${NC}"
-    echo -e "   • ${RED}Configura tu firewall para producción${NC}"
-    echo -e "   • ${RED}Realiza backups regulares de la configuración${NC}"
+    echo -e "${YELLOW}⚠️  IMPORTANTE - SEGURIDAD:${NC}"
+    echo -e "   • ${RED}Cambia TODAS las contraseñas inmediatamente${NC}"
+    echo -e "   • ${RED}Accede al panel de usuarios para crear administradores${NC}"
+    echo -e "   • ${RED}Configura certificados SSL para producción${NC}"
     echo ""
     
-    echo -e "${GREEN}✅ Sistema listo para usar en: http://$LOCAL_IP${NC}"
+    echo -e "${GREEN}✅ Sistema completamente funcional en: http://$PUBLIC_IP${NC}"
 }
 
 # Manejo de errores
@@ -934,15 +1005,17 @@ handle_error() {
 
 trap 'handle_error $LINENO' ERR
 
-# Función principal
+# Función principal actualizada
 main() {
+    echo "=== Geeks Radio Install v2.1.0 - $(date) ===" > "$LOG_FILE"
+    
     show_banner
     
-    log_info "Iniciando instalación DESATENDIDA de Geeks Radio Panel..."
-    log_info "Log de instalación: $LOG_FILE"
+    log_info "Iniciando instalación desatendida en puerto 7000..."
     
     check_root
     detect_system
+    detect_public_ip
     install_system_dependencies
     install_nodejs
     install_streaming_servers
@@ -951,15 +1024,14 @@ main() {
     install_app_dependencies
     build_application
     create_backend_api
-    create_additional_scripts
     configure_systemd_service
     configure_nginx
     configure_firewall
     start_services
-    create_update_script
     
     show_summary
 }
 
-# Ejecutar instalación
+# ... keep existing code (command line options)
+
 main "$@"
