@@ -11,8 +11,8 @@ export default defineConfig({
     },
   },
   server: {
+    port: 8080,
     host: '0.0.0.0',
-    port: 3000,
     proxy: {
       '/api': {
         target: 'http://localhost:7001',
@@ -34,8 +34,8 @@ export default defineConfig({
     },
   },
   preview: {
+    port: 8080,
     host: '0.0.0.0',
-    port: 3000,
     proxy: {
       '/api': {
         target: 'http://localhost:7001',
