@@ -1,3 +1,4 @@
+
 import axios from 'axios';
 
 // Configuración existente
@@ -40,5 +41,54 @@ api.interceptors.response.use(
     return Promise.reject(error);
   }
 );
+
+// API Service methods
+export const apiService = {
+  login: async (credentials: { username: string; password: string }) => {
+    const response = await api.post('/auth/login', credentials);
+    const { token, user } = response.data;
+    
+    if (token) {
+      localStorage.setItem('token', token);
+    }
+    
+    return { user, token };
+  },
+
+  getRadios: async () => {
+    const response = await api.get('/radios');
+    return response.data;
+  },
+
+  createRadio: async (radioData: any) => {
+    const response = await api.post('/radios', radioData);
+    return response.data;
+  },
+
+  updateRadioStatus: async (radioId: number, status: string) => {
+    const response = await api.patch(`/radios/${radioId}/status`, { status });
+    return response.data;
+  },
+
+  getStreamStats: async () => {
+    const response = await api.get('/stream/stats');
+    return response.data;
+  },
+
+  getClients: async () => {
+    const response = await api.get('/clients');
+    return response.data;
+  },
+
+  createClient: async (clientData: any) => {
+    const response = await api.post('/clients', clientData);
+    return response.data;
+  },
+
+  getPlans: async () => {
+    const response = await api.get('/plans');
+    return response.data;
+  }
+};
 
 export default api;
