@@ -1,4 +1,3 @@
-
 #!/bin/bash
 
 # Geeks Radio - Instalador Automático Completo
@@ -25,7 +24,7 @@ API_PORT=7001
 INSTALL_DIR="/opt/geeks-radio"
 SERVICE_NAME="geeks-radio"
 API_SERVICE_NAME="geeks-radio-api"
-LOG_FILE="/tmp/geeks-radio-install.log"
+LOG_FILE=""
 REPO_URL="https://github.com/kambire/geeks-radio-control-panel.git"
 ICECAST_CONFIG_DIR="/etc/icecast2"
 SHOUTCAST_DIR="/opt/shoutcast"
@@ -43,36 +42,46 @@ check_root() {
 
 # Crear archivo de log con permisos correctos
 setup_logging() {
-    # Crear directorio de logs si no existe
-    mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+    # Intentar diferentes ubicaciones para el archivo de log
+    local log_locations=(
+        "/var/log/geeks-radio-install.log"
+        "/tmp/geeks-radio-install-$(id -u).log"
+        "/home/$(logname 2>/dev/null || echo root)/geeks-radio-install.log"
+        "./geeks-radio-install.log"
+    )
     
-    # Crear archivo de log
-    touch "$LOG_FILE" 2>/dev/null || {
-        LOG_FILE="/tmp/geeks-radio-install-$(date +%s).log"
-        touch "$LOG_FILE"
-    }
+    for log_path in "${log_locations[@]}"; do
+        if touch "$log_path" 2>/dev/null && [ -w "$log_path" ]; then
+            LOG_FILE="$log_path"
+            break
+        fi
+    done
     
-    # Dar permisos apropiados
-    chmod 666 "$LOG_FILE" 2>/dev/null || true
+    # Si no se pudo crear ningún archivo de log, usar /dev/null
+    if [[ -z "$LOG_FILE" ]]; then
+        LOG_FILE="/dev/null"
+        echo -e "${YELLOW}[WARNING]${NC} No se pudo crear archivo de log, continuando sin logging"
+    fi
     
-    echo "=== Geeks Radio Install v2.1.0 - $(date) ===" > "$LOG_FILE"
+    # Inicializar log
+    echo "=== Geeks Radio Install v2.1.0 - $(date) ===" > "$LOG_FILE" 2>/dev/null || true
 }
 
 # Funciones de logging
 log_info() {
-    echo -e "${BLUE}[INFO]${NC} $1" | tee -a "$LOG_FILE"
+    echo -e "${BLUE}[INFO]${NC} $1" | tee -a "$LOG_FILE" 2>/dev/null || echo -e "${BLUE}[INFO]${NC} $1"
 }
 
 log_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1" | tee -a "$LOG_FILE"
+    echo -e "${GREEN}[SUCCESS]${NC} $1" | tee -a "$LOG_FILE" 2>/dev/null || echo -e "${GREEN}[SUCCESS]${NC} $1"
 }
 
 log_error() {
-    echo -e "${RED}[ERROR]${NC} $1" | tee -a "$LOG_FILE"
+    echo -e "${RED}[ERROR]${NC} $1" | tee -a "$LOG_FILE" 2>/dev/null || echo -e "${RED}[ERROR]${NC} $1"
 }
 
 log_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1" | tee -a "$LOG_FILE"
+    echo -e "${YELLOW}[WARNING]${NC} $1" | tee -a "$LOG_FILE" 2>/dev/null || echo -e "${YELLOW}[WARNING]${NC} $1"
 }
 
 # Mostrar banner
@@ -918,6 +927,7 @@ case "${1:-}" in
         exit 0
         ;;
     --update)
+        setup_logging
         log_info "Modo actualización solamente"
         check_root
         cd "$INSTALL_DIR" 2>/dev/null || {
