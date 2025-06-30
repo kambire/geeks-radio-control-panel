@@ -534,7 +534,7 @@ configure_systemd_service() {
     
     log_info "Configurando servicios systemd..."
     
-    # Servicio frontend
+    # Servicio frontend en puerto 3000 (interno)
     tee /etc/systemd/system/$SERVICE_NAME.service > /dev/null << SYSTEMD_EOF
 [Unit]
 Description=Geeks Radio Control Panel Frontend
@@ -546,8 +546,9 @@ Type=simple
 User=geeksradio
 WorkingDirectory=$INSTALL_DIR
 Environment=NODE_ENV=production
-Environment=PORT=$DEFAULT_PORT
-ExecStart=/usr/bin/npm start
+Environment=PORT=3000
+Environment=VITE_API_URL=/api
+ExecStart=/usr/bin/npm run preview
 Restart=on-failure
 RestartSec=10
 KillMode=mixed
@@ -604,7 +605,7 @@ server {
     listen 80;
     server_name localhost $PUBLIC_IP _;
     
-    # Frontend (Puerto 7000)
+    # Frontend (Puerto 7000) - Solo proxy para compatibilidad
     location / {
         proxy_pass http://127.0.0.1:$DEFAULT_PORT;
         proxy_http_version 1.1;
@@ -644,6 +645,36 @@ server {
     
     access_log /var/log/nginx/geeks-radio.access.log;
     error_log /var/log/nginx/geeks-radio.error.log;
+}
+
+# Servidor directo en puerto 7000
+server {
+    listen 7000;
+    server_name localhost $PUBLIC_IP _;
+    
+    # Servir directamente el frontend
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_cache_bypass \$http_upgrade;
+        proxy_read_timeout 86400;
+    }
+    
+    # API directo
+    location /api/ {
+        proxy_pass http://127.0.0.1:$API_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
 }
 NGINX_EOF
     
