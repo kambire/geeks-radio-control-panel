@@ -2,7 +2,7 @@
 
 # Geeks Radio - Instalador Automático Completo
 # Version: 2.1.0
-# Descripción: Instalación completa con Icecast, SHOUTcast y Backend - Puerto 7000
+# Descripción: Instalación completa con SHOUTcast y Backend - Puerto 7000
 # Repositorio: https://github.com/kambire/geeks-radio-control-panel
 
 set -e
@@ -26,10 +26,11 @@ SERVICE_NAME="geeks-radio"
 API_SERVICE_NAME="geeks-radio-api"
 LOG_FILE=""
 REPO_URL="https://github.com/kambire/geeks-radio-control-panel.git"
-ICECAST_CONFIG_DIR="/etc/icecast2"
 SHOUTCAST_DIR="/opt/shoutcast"
 STREAMS_DIR="/opt/geeks-radio/streams"
 PUBLIC_IP=""
+ADMIN_USER="admin"
+ADMIN_PASSWORD="geeksradio2024"
 
 # Verificar si se ejecuta como root
 check_root() {
@@ -45,7 +46,7 @@ setup_logging() {
     # Intentar diferentes ubicaciones para el archivo de log
     local log_locations=(
         "/var/log/geeks-radio-install.log"
-        "/tmp/geeks-radio-install-$(id -u).log"
+        "/tmp/geeks-radio-install-$(date +%s).log"
         "/home/$(logname 2>/dev/null || echo root)/geeks-radio-install.log"
         "./geeks-radio-install.log"
     )
@@ -150,22 +151,6 @@ detect_system() {
     fi
 }
 
-# Configurar instalación desatendida para Icecast
-configure_icecast_unattended() {
-    log_info "Configurando instalación desatendida de Icecast..."
-    
-    case $DISTRO in
-        "ubuntu")
-            # Preconfigurar respuestas para Icecast2
-            echo 'icecast2 icecast2/icecast-setup boolean true' | debconf-set-selections
-            echo 'icecast2 icecast2/hostname string localhost' | debconf-set-selections
-            echo 'icecast2 icecast2/sourcepassword password geeksradio2024' | debconf-set-selections
-            echo 'icecast2 icecast2/relaypassword password geeksradio2024' | debconf-set-selections
-            echo 'icecast2 icecast2/adminpassword password geeksradio2024' | debconf-set-selections
-            ;;
-    esac
-}
-
 # Instalar dependencias del sistema
 install_system_dependencies() {
     log_info "Instalando dependencias del sistema..."
@@ -218,83 +203,9 @@ install_nodejs() {
     log_success "npm instalado: $(npm --version)"
 }
 
-# Instalar servidores de streaming
+# Instalar servidores de streaming (solo SHOUTcast)
 install_streaming_servers() {
-    log_info "Instalando servidores de streaming..."
-    
-    # Configurar instalación desatendida antes de instalar
-    configure_icecast_unattended
-    
-    # Instalar Icecast2
-    case $DISTRO in
-        "ubuntu")
-            apt-get update -y
-            apt-get install -y icecast2
-            # Habilitar Icecast2 automáticamente
-            sed -i 's/ENABLE=false/ENABLE=true/' /etc/default/icecast2 2>/dev/null || true
-            ;;
-        "centos"|"fedora")
-            $PKG_MANAGER install -y icecast
-            ;;
-        "macos")
-            brew install icecast
-            ;;
-    esac
-    
-    # Configurar Icecast2 con configuración personalizada
-    log_info "Configurando Icecast2..."
-    mkdir -p "$ICECAST_CONFIG_DIR"
-    tee "$ICECAST_CONFIG_DIR/icecast.xml" > /dev/null << 'ICECAST_EOF'
-<icecast>
-    <location>Earth</location>
-    <admin>admin@geeksradio.com</admin>
-    <limits>
-        <clients>1000</clients>
-        <sources>100</sources>
-        <queue-size>524288</queue-size>
-        <client-timeout>30</client-timeout>
-        <header-timeout>15</header-timeout>
-        <source-timeout>10</source-timeout>
-        <burst-on-connect>1</burst-on-connect>
-        <burst-size>65535</burst-size>
-    </limits>
-    <authentication>
-        <source-password>geeksradio2024</source-password>
-        <relay-password>geeksradio2024</relay-password>
-        <admin-user>admin</admin-user>
-        <admin-password>geeksradio2024</admin-password>
-    </authentication>
-    <hostname>localhost</hostname>
-    <listen-socket>
-        <port>8000</port>
-    </listen-socket>
-    <http-headers>
-        <header name="Access-Control-Allow-Origin" value="*" />
-    </http-headers>
-    <fileserve>1</fileserve>
-    <paths>
-        <basedir>/usr/share/icecast2</basedir>
-        <logdir>/var/log/icecast2</logdir>
-        <webroot>/usr/share/icecast2/web</webroot>
-        <adminroot>/usr/share/icecast2/admin</adminroot>
-        <pidfile>/var/run/icecast2/icecast2.pid</pidfile>
-        <alias source="/" destination="/status.xsl"/>
-    </paths>
-    <logging>
-        <accesslog>access.log</accesslog>
-        <errorlog>error.log</errorlog>
-        <loglevel>3</loglevel>
-        <logsize>10000</logsize>
-    </logging>
-    <security>
-        <chroot>0</chroot>
-        <changeowner>
-            <user>icecast2</user>
-            <group>icecast</group>
-        </changeowner>
-    </security>
-</icecast>
-ICECAST_EOF
+    log_info "Instalando servidor de streaming SHOUTcast..."
     
     # Descargar e instalar SHOUTcast (versión gratuita)
     log_info "Instalando SHOUTcast Server..."
@@ -325,9 +236,8 @@ SHOUT_EOF
     # Crear directorios de logs
     mkdir -p "$SHOUTCAST_DIR/logs"
     mkdir -p "$STREAMS_DIR"
-    mkdir -p /var/log/icecast2
     
-    log_success "Servidores de streaming instalados y configurados"
+    log_success "Servidor de streaming SHOUTcast instalado y configurado"
 }
 
 # Crear usuario para la aplicación
@@ -434,94 +344,6 @@ create_backend_api() {
 }
 BACKEND_PACKAGE_EOF
     
-    # Crear servidor principal actualizado
-    tee backend/server.js > /dev/null << 'SERVER_EOF'
-const express = require('express');
-const cors = require('cors');
-const bodyParser = require('body-parser');
-const rateLimit = require('express-rate-limit');
-const helmet = require('helmet');
-const path = require('path');
-
-// Importar rutas
-const authRoutes = require('./routes/auth');
-const usersRoutes = require('./routes/users');
-const profileRoutes = require('./routes/profile');
-const radioRoutes = require('./routes/radios');
-const clientRoutes = require('./routes/clients');
-const planRoutes = require('./routes/plans');
-const streamRoutes = require('./routes/streams');
-const dashboardRoutes = require('./routes/dashboard');
-
-// Middleware personalizado
-const authMiddleware = require('./middleware/auth');
-
-// Inicializar base de datos
-const db = require('./config/database');
-db.init();
-
-const app = express();
-const PORT = process.env.PORT || 7001;
-
-// Security middleware
-app.use(helmet());
-
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100
-});
-
-// Middlewares
-app.use(cors());
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
-app.use(limiter);
-
-// Logging middleware
-app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
-  next();
-});
-
-// Rutas públicas
-app.use('/api/auth', authRoutes);
-
-// Rutas protegidas
-app.use('/api/users', authMiddleware, usersRoutes);
-app.use('/api/profile', authMiddleware, profileRoutes);
-app.use('/api/radios', authMiddleware, radioRoutes);
-app.use('/api/clients', authMiddleware, clientRoutes);
-app.use('/api/plans', authMiddleware, planRoutes);
-app.use('/api/streams', authMiddleware, streamRoutes);
-app.use('/api/dashboard', authMiddleware, dashboardRoutes);
-
-// Ruta de salud
-app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    version: '2.1.0'
-  });
-});
-
-// Manejo de errores
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({ 
-    error: 'Error interno del servidor',
-    message: process.env.NODE_ENV === 'development' ? err.message : 'Contacta al administrador'
-  });
-});
-
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Geeks Radio API corriendo en puerto ${PORT}`);
-  console.log(`📡 Panel disponible en http://localhost:7000`);
-  console.log(`🎵 API disponible en http://localhost:${PORT}/api`);
-});
-SERVER_EOF
-    
     log_success "Backend API creado y configurado"
 }
 
@@ -534,7 +356,7 @@ configure_systemd_service() {
     
     log_info "Configurando servicios systemd..."
     
-    # Servicio frontend en puerto 3000 (interno)
+    # Servicio frontend en puerto 8080 (interno)
     tee /etc/systemd/system/$SERVICE_NAME.service > /dev/null << SYSTEMD_EOF
 [Unit]
 Description=Geeks Radio Control Panel Frontend
@@ -546,7 +368,7 @@ Type=simple
 User=geeksradio
 WorkingDirectory=$INSTALL_DIR
 Environment=NODE_ENV=production
-Environment=PORT=3000
+Environment=PORT=8080
 Environment=VITE_API_URL=/api
 ExecStart=/usr/bin/npm run preview
 Restart=on-failure
@@ -592,9 +414,9 @@ API_SYSTEMD_EOF
     log_success "Servicios systemd configurados"
 }
 
-# Configurar nginx actualizado para puerto 7000
+# Configurar nginx actualizado para puerto 7000 (sin SSL)
 configure_nginx() {
-    log_info "Configurando nginx como proxy reverso para puerto 7000..."
+    log_info "Configurando nginx como proxy reverso para puerto 7000 (sin SSL)..."
     
     systemctl stop nginx 2>/dev/null || true
     
@@ -633,9 +455,9 @@ server {
         proxy_read_timeout 86400;
     }
     
-    # Panel Icecast
-    location /icecast/ {
-        proxy_pass http://127.0.0.1:8000/;
+    # SHOUTcast Admin (Puerto 8001)
+    location /shoutcast/ {
+        proxy_pass http://127.0.0.1:8001/;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
@@ -654,7 +476,7 @@ server {
     
     # Servir directamente el frontend
     location / {
-        proxy_pass http://127.0.0.1:3000;
+        proxy_pass http://127.0.0.1:8080;
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection 'upgrade';
@@ -685,7 +507,7 @@ NGINX_EOF
     fi
     
     if nginx -t; then
-        log_success "Configuración de nginx creada para puerto 7000"
+        log_success "Configuración de nginx creada para puerto 7000 (sin SSL)"
     else
         log_error "Error en la configuración de nginx"
         exit 1
@@ -700,19 +522,17 @@ configure_firewall() {
         ufw --force enable
         ufw allow 22/tcp
         ufw allow 80/tcp
-        ufw allow 443/tcp
         ufw allow 7000/tcp
         ufw allow 7001/tcp
-        ufw allow 8000:8100/tcp
+        ufw allow 8001:8100/tcp
         log_success "Firewall configurado (puerto 7000 habilitado)"
     elif command -v firewall-cmd >/dev/null 2>&1; then
         systemctl enable firewalld
         systemctl start firewalld
         firewall-cmd --permanent --add-port=80/tcp
-        firewall-cmd --permanent --add-port=443/tcp
         firewall-cmd --permanent --add-port=7000/tcp
         firewall-cmd --permanent --add-port=7001/tcp
-        firewall-cmd --permanent --add-port=8000-8100/tcp
+        firewall-cmd --permanent --add-port=8001-8100/tcp
         firewall-cmd --reload
         log_success "Firewall configurado con firewalld (puerto 7000)"
     else
@@ -727,8 +547,6 @@ start_services() {
     if [[ "$CREATE_USER" == true ]] && [[ "$DISTRO" != "macos" ]]; then
         chown -R geeksradio:geeksradio "$INSTALL_DIR"
         
-        systemctl start icecast2
-        systemctl enable icecast2
         systemctl start $SERVICE_NAME
         systemctl start $API_SERVICE_NAME
         systemctl start nginx
@@ -745,13 +563,6 @@ start_services() {
         else
             log_error "Error al iniciar $API_SERVICE_NAME"
             systemctl status $API_SERVICE_NAME --no-pager
-        fi
-        
-        if systemctl is-active --quiet icecast2; then
-            log_success "Servicio icecast2 iniciado correctamente"
-        else
-            log_error "Error al iniciar icecast2"
-            systemctl status icecast2 --no-pager
         fi
         
         if systemctl is-active --quiet nginx; then
@@ -844,30 +655,28 @@ show_summary() {
     echo -e "${BLUE}🌐 ACCESOS PRINCIPALES:${NC}"
     echo -e "   • Panel Web: ${GREEN}http://$PUBLIC_IP${NC}"
     echo -e "   • Panel Local: ${GREEN}http://localhost${NC}"
-    echo -e "   • Admin Icecast: ${GREEN}http://$PUBLIC_IP/icecast/admin${NC}"
+    echo -e "   • Panel Puerto 7000: ${GREEN}http://$PUBLIC_IP:7000${NC}"
+    echo -e "   • Admin SHOUTcast: ${GREEN}http://$PUBLIC_IP:8001${NC}"
     echo ""
     
-    echo -e "${BLUE}🔑 CREDENCIALES DEL SISTEMA:${NC}"
-    echo -e "   • Usuario Admin Panel: ${YELLOW}admin${NC}"
-    echo -e "   • Contraseña Admin Panel: ${YELLOW}geeksradio2024${NC}"
-    echo -e "   • Usuario Icecast Admin: ${YELLOW}admin${NC}"
-    echo -e "   • Contraseña Icecast Admin: ${YELLOW}geeksradio2024${NC}"
-    echo -e "   • Contraseña Fuente Icecast: ${YELLOW}geeksradio2024${NC}"
+    echo -e "${GREEN}🔑 CREDENCIALES DE ADMINISTRADOR:${NC}"
+    echo -e "   • ${YELLOW}Usuario Admin: $ADMIN_USER${NC}"
+    echo -e "   • ${YELLOW}Contraseña Admin: $ADMIN_PASSWORD${NC}"
     echo ""
     
     echo -e "${BLUE}📡 CONFIGURACIÓN DE PUERTOS:${NC}"
     echo -e "   • Acceso Web Principal: ${YELLOW}80 → 7000${NC}"
-    echo -e "   • Frontend React: ${YELLOW}7000${NC}"
+    echo -e "   • Frontend React: ${YELLOW}7000 (proxy desde 8080)${NC}"
     echo -e "   • Backend API: ${YELLOW}7001${NC}"
-    echo -e "   • Icecast Server: ${YELLOW}8000${NC}"
-    echo -e "   • Streams Adicionales: ${YELLOW}8001+${NC}"
+    echo -e "   • SHOUTcast Server: ${YELLOW}8001${NC}"
+    echo -e "   • Streams Adicionales: ${YELLOW}8002+${NC}"
     echo ""
     
     echo -e "${BLUE}🚀 SERVICIOS ACTIVOS:${NC}"
     echo -e "   • ✅ Frontend (Puerto 7000)"
     echo -e "   • ✅ Backend API (Puerto 7001)"
     echo -e "   • ✅ Nginx Proxy (Puerto 80)"
-    echo -e "   • ✅ Icecast2 (Puerto 8000)"
+    echo -e "   • ✅ SHOUTcast Server (Puerto 8001)"
     echo -e "   • ✅ Base de datos SQLite"
     echo ""
     
@@ -878,29 +687,36 @@ show_summary() {
     echo -e "   • ✅ Gestión de radios en tiempo real"
     echo -e "   • ✅ API REST completa con JWT"
     echo -e "   • ✅ Base de datos con usuarios y perfiles"
-    echo -e "   • ✅ Icecast2 configurado automáticamente"
+    echo -e "   • ✅ SHOUTcast configurado automáticamente"
     echo -e "   • ✅ Sistema de monitoreo y estadísticas"
+    echo -e "   • ✅ Sin SSL/HTTPS (ambiente de prueba)"
     echo ""
     
     echo -e "${BLUE}🔧 COMANDOS ÚTILES:${NC}"
     echo -e "   • Ver logs frontend: ${YELLOW}journalctl -u $SERVICE_NAME -f${NC}"
     echo -e "   • Ver logs API: ${YELLOW}journalctl -u $API_SERVICE_NAME -f${NC}"
-    echo -e "   • Verificar servicios: ${YELLOW}systemctl status $SERVICE_NAME $API_SERVICE_NAME nginx icecast2${NC}"
-    echo -e "   • Reiniciar todo: ${YELLOW}systemctl restart $SERVICE_NAME $API_SERVICE_NAME nginx icecast2${NC}"
+    echo -e "   • Verificar servicios: ${YELLOW}systemctl status $SERVICE_NAME $API_SERVICE_NAME nginx${NC}"
+    echo -e "   • Reiniciar todo: ${YELLOW}systemctl restart $SERVICE_NAME $API_SERVICE_NAME nginx${NC}"
     echo -e "   • Actualizar sistema: ${YELLOW}$INSTALL_DIR/update.sh${NC}"
     echo ""
     
     echo -e "${YELLOW}⚠️  IMPORTANTE - PRÓXIMOS PASOS:${NC}"
-    echo -e "   • ${RED}1. Acceder al panel y cambiar credenciales por defecto${NC}"
-    echo -e "   • ${RED}2. Crear usuarios administradores adicionales${NC}"
-    echo -e "   • ${RED}3. Configurar clientes y asignar servicios de radio${NC}"
-    echo -e "   • ${RED}4. Configurar certificados SSL para producción${NC}"
-    echo -e "   • ${RED}5. Personalizar configuraciones según necesidades${NC}"
+    echo -e "   • ${RED}1. Acceder al panel con las credenciales mostradas arriba${NC}"
+    echo -e "   • ${RED}2. Cambiar contraseña de administrador por defecto${NC}"
+    echo -e "   • ${RED}3. Crear usuarios administradores adicionales${NC}"
+    echo -e "   • ${RED}4. Configurar clientes y asignar servicios de radio${NC}"
+    echo -e "   • ${RED}5. Configurar streams de SHOUTcast según necesidades${NC}"
     echo ""
     
     echo -e "${GREEN}✅ SISTEMA COMPLETAMENTE FUNCIONAL EN:${NC}"
     echo -e "${GREEN}   🌍 http://$PUBLIC_IP${NC}"
     echo -e "${GREEN}   🏠 http://localhost${NC}"
+    echo -e "${GREEN}   🎵 http://$PUBLIC_IP:7000${NC}"
+    echo ""
+    
+    echo -e "${GREEN}🎯 CREDENCIALES PARA INGRESAR AL SISTEMA:${NC}"
+    echo -e "${GREEN}   Usuario: ${YELLOW}$ADMIN_USER${NC}"
+    echo -e "${GREEN}   Contraseña: ${YELLOW}$ADMIN_PASSWORD${NC}"
     echo ""
     
     echo -e "${BLUE}📋 Archivo de logs de instalación: ${YELLOW}$LOG_FILE${NC}"
