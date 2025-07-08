@@ -18,9 +18,11 @@ import {
   Trash2, 
   Edit,
   Headphones,
-  Server
+  Server,
+  RefreshCw
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
+import { apiService } from "@/services/api";
 
 interface RadioStation {
   id: number;
@@ -53,14 +55,22 @@ interface User {
   role: string;
 }
 
+interface PortInfo {
+  available_ports: number[];
+  next_auto_port: number;
+  used_ports: number[];
+}
+
 const RadiosManager = () => {
   const [radios, setRadios] = useState<RadioStation[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [portInfo, setPortInfo] = useState<PortInfo>({ available_ports: [], next_auto_port: 8000, used_ports: [] });
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingRadio, setEditingRadio] = useState<RadioStation | null>(null);
+  const [useAutoPort, setUseAutoPort] = useState(true);
   const [formData, setFormData] = useState({
     name: "",
     user_id: "",
@@ -68,7 +78,8 @@ const RadiosManager = () => {
     server_type: "shoutcast",
     bitrate: 128,
     max_listeners: 100,
-    mount_point: ""
+    mount_point: "",
+    port: ""
   });
 
   useEffect(() => {
@@ -80,7 +91,8 @@ const RadiosManager = () => {
       await Promise.all([
         fetchRadios(),
         fetchPlans(),
-        fetchUsers()
+        fetchUsers(),
+        fetchPortInfo()
       ]);
     } finally {
       setLoading(false);
@@ -89,34 +101,14 @@ const RadiosManager = () => {
 
   const fetchRadios = async () => {
     try {
-      console.log('Fetching radios...');
-      const token = localStorage.getItem('token');
-      const response = await fetch('/api/radios', {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      console.log('Radios response status:', response.status);
-      
-      if (response.ok) {
-        const data = await response.json();
-        console.log('Radios data received:', data);
-        setRadios(data);
-      } else {
-        console.error('Error fetching radios:', response.status);
-        toast({
-          title: "Error",
-          description: "No se pudieron cargar las radios",
-          variant: "destructive",
-        });
-      }
+      const data = await apiService.getRadios();
+      console.log('Radios fetched:', data);
+      setRadios(data || []);
     } catch (error) {
-      console.error('Network error fetching radios:', error);
+      console.error('Error fetching radios:', error);
       toast({
         title: "Error",
-        description: "Error de conexión al cargar radios",
+        description: "No se pudieron cargar las radios",
         variant: "destructive",
       });
     }
@@ -124,17 +116,8 @@ const RadiosManager = () => {
 
   const fetchPlans = async () => {
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch('/api/plans', {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setPlans(data);
-      }
+      const data = await apiService.getPlans();
+      setPlans(data || []);
     } catch (error) {
       console.error('Error fetching plans:', error);
     }
@@ -142,19 +125,19 @@ const RadiosManager = () => {
 
   const fetchUsers = async () => {
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch('/api/users', {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setUsers(data.filter((user: User) => user.role === 'client'));
-      }
+      const data = await apiService.getUsers();
+      setUsers((data || []).filter((user: User) => user.role === 'client'));
     } catch (error) {
       console.error('Error fetching users:', error);
+    }
+  };
+
+  const fetchPortInfo = async () => {
+    try {
+      const data = await apiService.getAvailablePorts();
+      setPortInfo(data);
+    } catch (error) {
+      console.error('Error fetching port info:', error);
     }
   };
 
@@ -163,44 +146,33 @@ const RadiosManager = () => {
     setSubmitting(true);
 
     try {
-      console.log('Submitting radio form:', formData);
-      const token = localStorage.getItem('token');
-      const url = editingRadio ? `/api/radios/${editingRadio.id}` : '/api/radios';
-      const method = editingRadio ? 'PUT' : 'POST';
+      const submitData = {
+        ...formData,
+        port: useAutoPort ? undefined : parseInt(formData.port) || undefined
+      };
 
-      const response = await fetch(url, {
-        method,
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(formData)
-      });
-
-      console.log('Radio submit response status:', response.status);
-
-      if (response.ok) {
-        const result = await response.json();
-        console.log('Radio submit result:', result);
-        
-        toast({
-          title: "Éxito",
-          description: `Radio ${editingRadio ? 'actualizada' : 'creada'} exitosamente`,
-        });
-        
-        await fetchRadios();
-        resetForm();
-        setIsDialogOpen(false);
+      let result;
+      if (editingRadio) {
+        result = await apiService.updateRadio(editingRadio.id, submitData);
       } else {
-        const errorData = await response.json();
-        console.error('Error submitting radio:', errorData);
-        throw new Error(errorData.error || 'Error en la operación');
+        result = await apiService.createRadio(submitData);
       }
-    } catch (error) {
+
+      console.log('Radio operation result:', result);
+      
+      toast({
+        title: "Éxito",
+        description: `Radio ${editingRadio ? 'actualizada' : 'creada'} exitosamente`,
+      });
+      
+      await fetchData(); // Refrescar todos los datos
+      resetForm();
+      setIsDialogOpen(false);
+    } catch (error: any) {
       console.error('Error in handleSubmit:', error);
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : 'Error desconocido',
+        description: error.response?.data?.error || error.message || 'Error desconocido',
         variant: "destructive",
       });
     } finally {
@@ -217,8 +189,10 @@ const RadiosManager = () => {
       server_type: radio.server_type,
       bitrate: radio.bitrate,
       max_listeners: radio.max_listeners,
-      mount_point: radio.mount_point || ""
+      mount_point: radio.mount_point || "",
+      port: radio.port?.toString() || ""
     });
+    setUseAutoPort(!radio.port);
     setIsDialogOpen(true);
   };
 
@@ -226,30 +200,17 @@ const RadiosManager = () => {
     if (!confirm('¿Estás seguro de eliminar esta radio?')) return;
 
     try {
-      console.log('Deleting radio:', id);
-      const token = localStorage.getItem('token');
-      const response = await fetch(`/api/radios/${id}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
+      await apiService.deleteRadio(id);
+      toast({
+        title: "Éxito",
+        description: "Radio eliminada exitosamente",
       });
-
-      if (response.ok) {
-        toast({
-          title: "Éxito",
-          description: "Radio eliminada exitosamente",
-        });
-        await fetchRadios();
-      } else {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Error eliminando radio');
-      }
-    } catch (error) {
+      await fetchData();
+    } catch (error: any) {
       console.error('Error deleting radio:', error);
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : 'No se pudo eliminar la radio',
+        description: error.response?.data?.error || 'No se pudo eliminar la radio',
         variant: "destructive",
       });
     }
@@ -262,28 +223,19 @@ const RadiosManager = () => {
 
       const newStatus = radio.status === 'active' ? 'inactive' : 'active';
       
-      const token = localStorage.getItem('token');
-      const response = await fetch(`/api/radios/${id}/status`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ status: newStatus })
+      await apiService.updateRadioStatus(id, newStatus);
+      
+      toast({
+        title: `Radio ${newStatus === 'active' ? 'activada' : 'desactivada'}`,
+        description: `${radio.name} ha sido ${newStatus === 'active' ? 'activada' : 'desactivada'}.`,
       });
-
-      if (response.ok) {
-        toast({
-          title: `Radio ${newStatus === 'active' ? 'activada' : 'desactivada'}`,
-          description: `${radio.name} ha sido ${newStatus === 'active' ? 'activada' : 'desactivada'}.`,
-        });
-        await fetchRadios();
-      }
-    } catch (error) {
+      
+      await fetchRadios();
+    } catch (error: any) {
       console.error('Error toggling radio status:', error);
       toast({
         title: "Error",
-        description: "No se pudo cambiar el estado de la radio",
+        description: error.response?.data?.error || 'No se pudo cambiar el estado de la radio',
         variant: "destructive",
       });
     }
@@ -297,9 +249,11 @@ const RadiosManager = () => {
       server_type: "shoutcast",
       bitrate: 128,
       max_listeners: 100,
-      mount_point: ""
+      mount_point: "",
+      port: ""
     });
     setEditingRadio(null);
+    setUseAutoPort(true);
   };
 
   if (loading) {
@@ -322,167 +276,215 @@ const RadiosManager = () => {
               </CardTitle>
               <CardDescription className="text-slate-400">
                 Administra todas las estaciones de radio del sistema ({radios.length} radios)
+                <br />
+                Puertos disponibles: {portInfo.available_ports.join(', ')} | Próximo automático: {portInfo.next_auto_port}
               </CardDescription>
             </div>
-            <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-              <DialogTrigger asChild>
-                <Button 
-                  className="bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600"
-                  onClick={() => {
-                    setEditingRadio(null);
-                    resetForm();
-                  }}
-                >
-                  <Plus className="h-4 w-4 mr-2" />
-                  Nueva Radio
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="bg-slate-800 border-slate-700 max-w-2xl">
-                <DialogHeader>
-                  <DialogTitle className="text-white">
-                    {editingRadio ? 'Editar Radio' : 'Nueva Radio'}
-                  </DialogTitle>
-                  <DialogDescription className="text-slate-400">
-                    {editingRadio ? 'Modifica los datos de la radio' : 'Configura una nueva estación de radio'}
-                  </DialogDescription>
-                </DialogHeader>
-                <form onSubmit={handleSubmit} className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="name" className="text-slate-300">Nombre de la Radio</Label>
-                      <Input
-                        id="name"
-                        value={formData.name}
-                        onChange={(e) => setFormData({...formData, name: e.target.value})}
-                        className="bg-slate-700 border-slate-600 text-white"
-                        placeholder="Ej: Radio Rock FM"
-                        required
-                        disabled={submitting}
-                      />
+            <div className="flex space-x-2">
+              <Button 
+                variant="outline"
+                onClick={fetchData}
+                className="border-slate-600 text-slate-300"
+              >
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Actualizar
+              </Button>
+              <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+                <DialogTrigger asChild>
+                  <Button 
+                    className="bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600"
+                    onClick={() => {
+                      setEditingRadio(null);
+                      resetForm();
+                    }}
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Nueva Radio
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="bg-slate-800 border-slate-700 max-w-2xl">
+                  <DialogHeader>
+                    <DialogTitle className="text-white">
+                      {editingRadio ? 'Editar Radio' : 'Nueva Radio'}
+                    </DialogTitle>
+                    <DialogDescription className="text-slate-400">
+                      {editingRadio ? 'Modifica los datos de la radio' : 'Configura una nueva estación de radio'}
+                    </DialogDescription>
+                  </DialogHeader>
+                  <form onSubmit={handleSubmit} className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="name" className="text-slate-300">Nombre de la Radio</Label>
+                        <Input
+                          id="name"
+                          value={formData.name}
+                          onChange={(e) => setFormData({...formData, name: e.target.value})}
+                          className="bg-slate-700 border-slate-600 text-white"
+                          placeholder="Ej: Radio Rock FM"
+                          required
+                          disabled={submitting}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="user_id" className="text-slate-300">Cliente</Label>
+                        <Select 
+                          value={formData.user_id} 
+                          onValueChange={(value) => setFormData({...formData, user_id: value})}
+                          disabled={submitting}
+                        >
+                          <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
+                            <SelectValue placeholder="Selecciona un cliente" />
+                          </SelectTrigger>
+                          <SelectContent className="bg-slate-700 border-slate-600">
+                            {users.map(user => (
+                              <SelectItem key={user.id} value={user.id.toString()} className="text-white">
+                                {user.username} ({user.email})
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
                     </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="user_id" className="text-slate-300">Cliente</Label>
-                      <Select 
-                        value={formData.user_id} 
-                        onValueChange={(value) => setFormData({...formData, user_id: value})}
+                    
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="plan_id" className="text-slate-300">Plan</Label>
+                        <Select 
+                          value={formData.plan_id} 
+                          onValueChange={(value) => setFormData({...formData, plan_id: value})}
+                          disabled={submitting}
+                        >
+                          <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
+                            <SelectValue placeholder="Selecciona un plan" />
+                          </SelectTrigger>
+                          <SelectContent className="bg-slate-700 border-slate-600">
+                            {plans.map(plan => (
+                              <SelectItem key={plan.id} value={plan.id.toString()} className="text-white">
+                                {plan.name} (Max: {plan.max_listeners} oyentes)
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="server_type" className="text-slate-300">Servidor</Label>
+                        <Select 
+                          value={formData.server_type} 
+                          onValueChange={(value) => setFormData({...formData, server_type: value})}
+                          disabled={submitting}
+                        >
+                          <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className="bg-slate-700 border-slate-600">
+                            <SelectItem value="shoutcast" className="text-white">SHOUTcast</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    
+                    {/* Puerto Configuration */}
+                    <div className="space-y-4 p-4 bg-slate-700/30 rounded-lg">
+                      <div className="flex items-center space-x-2">
+                        <Switch
+                          id="auto-port"
+                          checked={useAutoPort}
+                          onCheckedChange={setUseAutoPort}
+                        />
+                        <Label htmlFor="auto-port" className="text-slate-300">
+                          Asignar puerto automáticamente (próximo: {portInfo.next_auto_port})
+                        </Label>
+                      </div>
+                      
+                      {!useAutoPort && (
+                        <div className="space-y-2">
+                          <Label htmlFor="port" className="text-slate-300">Puerto Manual</Label>
+                          <Select 
+                            value={formData.port} 
+                            onValueChange={(value) => setFormData({...formData, port: value})}
+                            disabled={submitting}
+                          >
+                            <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
+                              <SelectValue placeholder="Selecciona un puerto" />
+                            </SelectTrigger>
+                            <SelectContent className="bg-slate-700 border-slate-600">
+                              {portInfo.available_ports.map(port => (
+                                <SelectItem key={port} value={port.toString()} className="text-white">
+                                  Puerto {port}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+                    </div>
+                    
+                    <div className="grid grid-cols-3 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="max_listeners" className="text-slate-300">Máx. Oyentes</Label>
+                        <Input
+                          id="max_listeners"
+                          type="number"
+                          value={formData.max_listeners}
+                          onChange={(e) => setFormData({...formData, max_listeners: parseInt(e.target.value) || 100})}
+                          className="bg-slate-700 border-slate-600 text-white"
+                          disabled={submitting}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="bitrate" className="text-slate-300">Bitrate (kbps)</Label>
+                        <Select 
+                          value={formData.bitrate.toString()} 
+                          onValueChange={(value) => setFormData({...formData, bitrate: parseInt(value)})}
+                          disabled={submitting}
+                        >
+                          <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className="bg-slate-700 border-slate-600">
+                            <SelectItem value="64" className="text-white">64 kbps</SelectItem>
+                            <SelectItem value="96" className="text-white">96 kbps</SelectItem>
+                            <SelectItem value="128" className="text-white">128 kbps</SelectItem>
+                            <SelectItem value="192" className="text-white">192 kbps</SelectItem>
+                            <SelectItem value="320" className="text-white">320 kbps</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="mount_point" className="text-slate-300">Mount Point</Label>
+                        <Input
+                          id="mount_point"
+                          value={formData.mount_point}
+                          onChange={(e) => setFormData({...formData, mount_point: e.target.value})}
+                          className="bg-slate-700 border-slate-600 text-white"
+                          placeholder="/stream"
+                          disabled={submitting}
+                        />
+                      </div>
+                    </div>
+                    
+                    <div className="flex justify-end space-x-2 pt-4">
+                      <Button 
+                        type="button"
+                        variant="outline" 
+                        onClick={() => setIsDialogOpen(false)}
+                        className="border-slate-600 text-slate-300"
                         disabled={submitting}
                       >
-                        <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
-                          <SelectValue placeholder="Selecciona un cliente" />
-                        </SelectTrigger>
-                        <SelectContent className="bg-slate-700 border-slate-600">
-                          {users.map(user => (
-                            <SelectItem key={user.id} value={user.id.toString()} className="text-white">
-                              {user.username} ({user.email})
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                  
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="plan_id" className="text-slate-300">Plan</Label>
-                      <Select 
-                        value={formData.plan_id} 
-                        onValueChange={(value) => setFormData({...formData, plan_id: value})}
+                        Cancelar
+                      </Button>
+                      <Button 
+                        type="submit"
+                        className="bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600"
                         disabled={submitting}
                       >
-                        <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
-                          <SelectValue placeholder="Selecciona un plan" />
-                        </SelectTrigger>
-                        <SelectContent className="bg-slate-700 border-slate-600">
-                          {plans.map(plan => (
-                            <SelectItem key={plan.id} value={plan.id.toString()} className="text-white">
-                              {plan.name} (Max: {plan.max_listeners} oyentes)
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                        {submitting ? 'Guardando...' : (editingRadio ? 'Actualizar' : 'Crear')} Radio
+                      </Button>
                     </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="server_type" className="text-slate-300">Servidor</Label>
-                      <Select 
-                        value={formData.server_type} 
-                        onValueChange={(value) => setFormData({...formData, server_type: value})}
-                        disabled={submitting}
-                      >
-                        <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent className="bg-slate-700 border-slate-600">
-                          <SelectItem value="shoutcast" className="text-white">SHOUTcast</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                  
-                  <div className="grid grid-cols-3 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="max_listeners" className="text-slate-300">Máx. Oyentes</Label>
-                      <Input
-                        id="max_listeners"
-                        type="number"
-                        value={formData.max_listeners}
-                        onChange={(e) => setFormData({...formData, max_listeners: parseInt(e.target.value) || 100})}
-                        className="bg-slate-700 border-slate-600 text-white"
-                        disabled={submitting}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="bitrate" className="text-slate-300">Bitrate (kbps)</Label>
-                      <Select 
-                        value={formData.bitrate.toString()} 
-                        onValueChange={(value) => setFormData({...formData, bitrate: parseInt(value)})}
-                        disabled={submitting}
-                      >
-                        <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent className="bg-slate-700 border-slate-600">
-                          <SelectItem value="64" className="text-white">64 kbps</SelectItem>
-                          <SelectItem value="96" className="text-white">96 kbps</SelectItem>
-                          <SelectItem value="128" className="text-white">128 kbps</SelectItem>
-                          <SelectItem value="192" className="text-white">192 kbps</SelectItem>
-                          <SelectItem value="320" className="text-white">320 kbps</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="mount_point" className="text-slate-300">Mount Point</Label>
-                      <Input
-                        id="mount_point"
-                        value={formData.mount_point}
-                        onChange={(e) => setFormData({...formData, mount_point: e.target.value})}
-                        className="bg-slate-700 border-slate-600 text-white"
-                        placeholder="/stream"
-                        disabled={submitting}
-                      />
-                    </div>
-                  </div>
-                  
-                  <div className="flex justify-end space-x-2 pt-4">
-                    <Button 
-                      type="button"
-                      variant="outline" 
-                      onClick={() => setIsDialogOpen(false)}
-                      className="border-slate-600 text-slate-300"
-                      disabled={submitting}
-                    >
-                      Cancelar
-                    </Button>
-                    <Button 
-                      type="submit"
-                      className="bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600"
-                      disabled={submitting}
-                    >
-                      {submitting ? 'Guardando...' : (editingRadio ? 'Actualizar' : 'Crear')} Radio
-                    </Button>
-                  </div>
-                </form>
-              </DialogContent>
-            </Dialog>
+                  </form>
+                </DialogContent>
+              </Dialog>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
@@ -496,7 +498,7 @@ const RadiosManager = () => {
                 <TableRow className="border-slate-700">
                   <TableHead className="text-slate-300">Radio</TableHead>
                   <TableHead className="text-slate-300">Cliente</TableHead>
-                  <TableHead className="text-slate-300">Plan</TableHead>
+                  <TableHead className="text-slate-300">Puerto</TableHead>
                   <TableHead className="text-slate-300">Oyentes</TableHead>
                   <TableHead className="text-slate-300">Estado</TableHead>
                   <TableHead className="text-slate-300">Acciones</TableHead>
@@ -528,7 +530,9 @@ const RadiosManager = () => {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <span className="text-white">{radio.plan_name || 'Sin plan'}</span>
+                      <Badge variant="outline" className="border-orange-500 text-orange-400">
+                        {radio.port || 'Auto'}
+                      </Badge>
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center space-x-2">

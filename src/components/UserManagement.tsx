@@ -8,8 +8,9 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Users, Plus, Edit, Trash2, Shield, UserCheck } from "lucide-react";
+import { Users, Plus, Edit, Trash2, Shield, UserCheck, RefreshCw } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
+import { apiService } from "@/services/api";
 
 interface User {
   id: number;
@@ -48,34 +49,14 @@ const UserManagement = () => {
   const fetchUsers = async () => {
     try {
       console.log('Fetching users...');
-      const token = localStorage.getItem('token');
-      const response = await fetch('/api/users', {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      console.log('Users response status:', response.status);
-      
-      if (response.ok) {
-        const data = await response.json();
-        console.log('Users data received:', data);
-        setUsers(data);
-      } else {
-        const errorData = await response.text();
-        console.error('Error fetching users:', response.status, errorData);
-        toast({
-          title: "Error",
-          description: "No se pudieron cargar los usuarios",
-          variant: "destructive",
-        });
-      }
-    } catch (error) {
-      console.error('Network error fetching users:', error);
+      const data = await apiService.getUsers();
+      console.log('Users data received:', data);
+      setUsers(data || []);
+    } catch (error: any) {
+      console.error('Error fetching users:', error);
       toast({
         title: "Error",
-        description: "Error de conexión al cargar usuarios",
+        description: error.response?.data?.error || "No se pudieron cargar los usuarios",
         variant: "destructive",
       });
     } finally {
@@ -89,44 +70,29 @@ const UserManagement = () => {
     
     try {
       console.log('Submitting user form:', formData);
-      const token = localStorage.getItem('token');
-      const url = editingUser ? `/api/users/${editingUser.id}` : '/api/users';
-      const method = editingUser ? 'PUT' : 'POST';
-
-      const response = await fetch(url, {
-        method,
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(formData)
-      });
-
-      console.log('User submit response status:', response.status);
-
-      if (response.ok) {
-        const result = await response.json();
-        console.log('User submit result:', result);
-        
-        toast({
-          title: "Éxito",
-          description: `Usuario ${editingUser ? 'actualizado' : 'creado'} exitosamente`,
-        });
-        
-        // Refresh the users list
-        await fetchUsers();
-        resetForm();
-        setDialogOpen(false);
+      
+      let result;
+      if (editingUser) {
+        result = await apiService.updateUser(editingUser.id, formData);
       } else {
-        const errorData = await response.json();
-        console.error('Error submitting user:', errorData);
-        throw new Error(errorData.error || 'Error en la operación');
+        result = await apiService.createUser(formData);
       }
-    } catch (error) {
+
+      console.log('User operation result:', result);
+      
+      toast({
+        title: "Éxito",
+        description: `Usuario ${editingUser ? 'actualizado' : 'creado'} exitosamente`,
+      });
+      
+      await fetchUsers();
+      resetForm();
+      setDialogOpen(false);
+    } catch (error: any) {
       console.error('Error in handleSubmit:', error);
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : 'Error desconocido',
+        description: error.response?.data?.error || error.message || 'Error desconocido',
         variant: "destructive",
       });
     } finally {
@@ -154,30 +120,19 @@ const UserManagement = () => {
 
     try {
       console.log('Deleting user:', userId);
-      const token = localStorage.getItem('token');
-      const response = await fetch(`/api/users/${userId}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
+      await apiService.deleteUser(userId);
+      
+      toast({
+        title: "Éxito",
+        description: "Usuario eliminado exitosamente",
       });
-
-      if (response.ok) {
-        toast({
-          title: "Éxito",
-          description: "Usuario eliminado exitosamente",
-        });
-        // Refresh the users list
-        await fetchUsers();
-      } else {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Error eliminando usuario');
-      }
-    } catch (error) {
+      
+      await fetchUsers();
+    } catch (error: any) {
       console.error('Error deleting user:', error);
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : 'No se pudo eliminar el usuario',
+        description: error.response?.data?.error || 'No se pudo eliminar el usuario',
         variant: "destructive",
       });
     }
@@ -227,138 +182,149 @@ const UserManagement = () => {
           <h2 className="text-2xl font-bold text-white">Gestión de Usuarios</h2>
         </div>
         
-        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogTrigger asChild>
-            <Button onClick={resetForm} className="bg-orange-500 hover:bg-orange-600">
-              <Plus className="h-4 w-4 mr-2" />
-              Nuevo Usuario
-            </Button>
-          </DialogTrigger>
+        <div className="flex space-x-2">
+          <Button 
+            variant="outline"
+            onClick={fetchUsers}
+            className="border-slate-600 text-slate-300"
+          >
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Actualizar
+          </Button>
           
-          <DialogContent className="bg-slate-800 border-slate-700 text-white">
-            <DialogHeader>
-              <DialogTitle>
-                {editingUser ? 'Editar Usuario' : 'Crear Nuevo Usuario'}
-              </DialogTitle>
-              <DialogDescription>
-                {editingUser ? 'Modifica los datos del usuario' : 'Completa los datos para crear un nuevo usuario'}
-              </DialogDescription>
-            </DialogHeader>
+          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+            <DialogTrigger asChild>
+              <Button onClick={resetForm} className="bg-orange-500 hover:bg-orange-600">
+                <Plus className="h-4 w-4 mr-2" />
+                Nuevo Usuario
+              </Button>
+            </DialogTrigger>
             
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="username">Usuario</Label>
-                  <Input
-                    id="username"
-                    value={formData.username}
-                    onChange={(e) => setFormData({...formData, username: e.target.value})}
-                    className="bg-slate-700 border-slate-600"
-                    required
-                    disabled={submitting}
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="email">Email</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    value={formData.email}
-                    onChange={(e) => setFormData({...formData, email: e.target.value})}
-                    className="bg-slate-700 border-slate-600"
-                    required
-                    disabled={submitting}
-                  />
-                </div>
-              </div>
+            <DialogContent className="bg-slate-800 border-slate-700 text-white">
+              <DialogHeader>
+                <DialogTitle>
+                  {editingUser ? 'Editar Usuario' : 'Crear Nuevo Usuario'}
+                </DialogTitle>
+                <DialogDescription>
+                  {editingUser ? 'Modifica los datos del usuario' : 'Completa los datos para crear un nuevo usuario'}
+                </DialogDescription>
+              </DialogHeader>
               
-              <div className="grid grid-cols-2 gap-4">
+              <form onSubmit={handleSubmit} className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="username">Usuario</Label>
+                    <Input
+                      id="username"
+                      value={formData.username}
+                      onChange={(e) => setFormData({...formData, username: e.target.value})}
+                      className="bg-slate-700 border-slate-600"
+                      required
+                      disabled={submitting}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="email">Email</Label>
+                    <Input
+                      id="email"
+                      type="email"
+                      value={formData.email}
+                      onChange={(e) => setFormData({...formData, email: e.target.value})}
+                      className="bg-slate-700 border-slate-600"
+                      required
+                      disabled={submitting}
+                    />
+                  </div>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="password">
+                      {editingUser ? 'Nueva Contraseña (opcional)' : 'Contraseña'}
+                    </Label>
+                    <Input
+                      id="password"
+                      type="password"
+                      value={formData.password}
+                      onChange={(e) => setFormData({...formData, password: e.target.value})}
+                      className="bg-slate-700 border-slate-600"
+                      required={!editingUser}
+                      disabled={submitting}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="role">Rol</Label>
+                    <Select 
+                      value={formData.role} 
+                      onValueChange={(value) => setFormData({...formData, role: value})}
+                      disabled={submitting}
+                    >
+                      <SelectTrigger className="bg-slate-700 border-slate-600">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="client">Cliente</SelectItem>
+                        <SelectItem value="admin">Administrador</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                
                 <div>
-                  <Label htmlFor="password">
-                    {editingUser ? 'Nueva Contraseña (opcional)' : 'Contraseña'}
-                  </Label>
+                  <Label htmlFor="full_name">Nombre Completo</Label>
                   <Input
-                    id="password"
-                    type="password"
-                    value={formData.password}
-                    onChange={(e) => setFormData({...formData, password: e.target.value})}
+                    id="full_name"
+                    value={formData.full_name}
+                    onChange={(e) => setFormData({...formData, full_name: e.target.value})}
                     className="bg-slate-700 border-slate-600"
-                    required={!editingUser}
                     disabled={submitting}
                   />
                 </div>
-                <div>
-                  <Label htmlFor="role">Rol</Label>
-                  <Select 
-                    value={formData.role} 
-                    onValueChange={(value) => setFormData({...formData, role: value})}
+                
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="phone">Teléfono</Label>
+                    <Input
+                      id="phone"
+                      value={formData.phone}
+                      onChange={(e) => setFormData({...formData, phone: e.target.value})}
+                      className="bg-slate-700 border-slate-600"
+                      disabled={submitting}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="company">Empresa</Label>
+                    <Input
+                      id="company"
+                      value={formData.company}
+                      onChange={(e) => setFormData({...formData, company: e.target.value})}
+                      className="bg-slate-700 border-slate-600"
+                      disabled={submitting}
+                    />
+                  </div>
+                </div>
+                
+                <DialogFooter>
+                  <Button 
+                    type="button" 
+                    variant="outline" 
+                    onClick={() => setDialogOpen(false)}
                     disabled={submitting}
                   >
-                    <SelectTrigger className="bg-slate-700 border-slate-600">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="client">Cliente</SelectItem>
-                      <SelectItem value="admin">Administrador</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              
-              <div>
-                <Label htmlFor="full_name">Nombre Completo</Label>
-                <Input
-                  id="full_name"
-                  value={formData.full_name}
-                  onChange={(e) => setFormData({...formData, full_name: e.target.value})}
-                  className="bg-slate-700 border-slate-600"
-                  disabled={submitting}
-                />
-              </div>
-              
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="phone">Teléfono</Label>
-                  <Input
-                    id="phone"
-                    value={formData.phone}
-                    onChange={(e) => setFormData({...formData, phone: e.target.value})}
-                    className="bg-slate-700 border-slate-600"
+                    Cancelar
+                  </Button>
+                  <Button 
+                    type="submit" 
+                    className="bg-orange-500 hover:bg-orange-600"
                     disabled={submitting}
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="company">Empresa</Label>
-                  <Input
-                    id="company"
-                    value={formData.company}
-                    onChange={(e) => setFormData({...formData, company: e.target.value})}
-                    className="bg-slate-700 border-slate-600"
-                    disabled={submitting}
-                  />
-                </div>
-              </div>
-              
-              <DialogFooter>
-                <Button 
-                  type="button" 
-                  variant="outline" 
-                  onClick={() => setDialogOpen(false)}
-                  disabled={submitting}
-                >
-                  Cancelar
-                </Button>
-                <Button 
-                  type="submit" 
-                  className="bg-orange-500 hover:bg-orange-600"
-                  disabled={submitting}
-                >
-                  {submitting ? 'Guardando...' : (editingUser ? 'Actualizar' : 'Crear')} Usuario
-                </Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
+                  >
+                    {submitting ? 'Guardando...' : (editingUser ? 'Actualizar' : 'Crear')} Usuario
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+        </div>
       </div>
 
       <Card className="bg-slate-800/50 border-slate-700">

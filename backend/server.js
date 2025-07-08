@@ -1,4 +1,3 @@
-
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
@@ -6,6 +5,73 @@ const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 7001;
+
+// Base de datos simulada para radios y usuarios
+let radiosDB = [
+  {
+    id: 1,
+    name: 'Radio Demo FM',
+    user_id: 2,
+    username: 'cliente1',
+    email: 'cliente1@ejemplo.com',
+    plan_id: 1,
+    plan_name: 'Plan Básico',
+    server_type: 'shoutcast',
+    port: 8000,
+    status: 'active',
+    current_listeners: 15,
+    max_listeners: 100,
+    bitrate: 128,
+    mount_point: '/demo',
+    created_at: new Date().toISOString()
+  }
+];
+
+let usersDB = [
+  {
+    id: 1,
+    username: 'admin',
+    email: 'admin@geeksradio.com',
+    role: 'admin',
+    full_name: 'Administrador',
+    phone: '+1234567890',
+    company: 'Geeks Radio',
+    is_active: true,
+    last_login: new Date().toISOString(),
+    created_at: new Date().toISOString()
+  },
+  {
+    id: 2,
+    username: 'cliente1',
+    email: 'cliente1@ejemplo.com',
+    role: 'client',
+    full_name: 'Cliente Demo',
+    phone: '+0987654321',
+    company: 'Radio Demo FM',
+    is_active: true,
+    last_login: null,
+    created_at: new Date().toISOString()
+  }
+];
+
+let nextUserId = 3;
+let nextRadioId = 2;
+
+// Función para obtener el siguiente puerto disponible
+const getNextAvailablePort = () => {
+  const basePorts = [8000, 8002, 8004, 8006, 8008, 8010, 8012, 8014, 8016, 8018];
+  const usedPorts = radiosDB.map(radio => radio.port);
+  
+  for (const port of basePorts) {
+    if (!usedPorts.includes(port)) {
+      return port;
+    }
+  }
+  
+  // Si todos los puertos básicos están ocupados, generar el siguiente par
+  const maxPort = Math.max(...usedPorts.filter(p => p >= 8000));
+  return maxPort + 2;
+};
 
 // Middlewares básicos
 app.use(cors({
@@ -41,7 +107,9 @@ app.get('/api/health', (req, res) => {
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     version: '2.1.0',
-    port: PORT
+    port: PORT,
+    total_radios: radiosDB.length,
+    total_users: usersDB.length
   });
 });
 
@@ -61,7 +129,7 @@ app.post('/api/auth/login', (req, res) => {
         email: 'admin@geeksradio.com',
         full_name: 'Administrador'
       },
-      token: 'temp-token-' + Date.now()
+      token: 'temp-token-admin-' + Date.now()
     };
     console.log('Login successful:', response);
     res.json(response);
@@ -76,39 +144,12 @@ app.post('/api/auth/login', (req, res) => {
 });
 
 // ===== RUTAS DE USUARIOS =====
-// Obtener todos los usuarios
 app.get('/api/users', authMiddleware, (req, res) => {
-  console.log('GET /api/users - Fetching users');
-  const users = [
-    {
-      id: 1,
-      username: 'admin',
-      email: 'admin@geeksradio.com',
-      role: 'admin',
-      full_name: 'Administrador',
-      phone: '+1234567890',
-      company: 'Geeks Radio',
-      is_active: true,
-      last_login: new Date().toISOString(),
-      created_at: new Date().toISOString()
-    },
-    {
-      id: 2,
-      username: 'cliente1',
-      email: 'cliente1@ejemplo.com',
-      role: 'client',
-      full_name: 'Cliente Demo',
-      phone: '+0987654321',
-      company: 'Radio Demo FM',
-      is_active: true,
-      last_login: null,
-      created_at: new Date().toISOString()
-    }
-  ];
-  res.json(users);
+  console.log('GET /api/users - Fetching users from memory');
+  console.log('Current users in DB:', usersDB);
+  res.json(usersDB);
 });
 
-// Crear usuario
 app.post('/api/users', authMiddleware, (req, res) => {
   console.log('POST /api/users - Creating user:', req.body);
   const { username, email, password, role, full_name, phone, company } = req.body;
@@ -117,8 +158,14 @@ app.post('/api/users', authMiddleware, (req, res) => {
     return res.status(400).json({ error: 'Campos requeridos: username, email, password' });
   }
   
+  // Verificar si el usuario ya existe
+  const existingUser = usersDB.find(u => u.username === username || u.email === email);
+  if (existingUser) {
+    return res.status(400).json({ error: 'Usuario o email ya existe' });
+  }
+  
   const newUser = {
-    id: Date.now(), // ID temporal
+    id: nextUserId++,
     username,
     email,
     role: role || 'client',
@@ -130,123 +177,200 @@ app.post('/api/users', authMiddleware, (req, res) => {
     created_at: new Date().toISOString()
   };
   
+  usersDB.push(newUser);
   console.log('User created successfully:', newUser);
+  console.log('Updated users DB:', usersDB);
+  
   res.status(201).json({
     message: 'Usuario creado exitosamente',
     user: newUser
   });
 });
 
-// Actualizar usuario
 app.put('/api/users/:id', authMiddleware, (req, res) => {
-  const userId = req.params.id;
+  const userId = parseInt(req.params.id);
   console.log(`PUT /api/users/${userId} - Updating user:`, req.body);
   
+  const userIndex = usersDB.findIndex(u => u.id === userId);
+  if (userIndex === -1) {
+    return res.status(404).json({ error: 'Usuario no encontrado' });
+  }
+  
+  const { username, email, role, full_name, phone, company } = req.body;
+  
+  // Actualizar usuario
+  usersDB[userIndex] = {
+    ...usersDB[userIndex],
+    username: username || usersDB[userIndex].username,
+    email: email || usersDB[userIndex].email,
+    role: role || usersDB[userIndex].role,
+    full_name: full_name || usersDB[userIndex].full_name,
+    phone: phone || usersDB[userIndex].phone,
+    company: company || usersDB[userIndex].company
+  };
+  
+  console.log('User updated successfully:', usersDB[userIndex]);
   res.json({
     message: 'Usuario actualizado exitosamente',
-    userId: parseInt(userId)
+    user: usersDB[userIndex]
   });
 });
 
-// Eliminar usuario
 app.delete('/api/users/:id', authMiddleware, (req, res) => {
-  const userId = req.params.id;
+  const userId = parseInt(req.params.id);
   console.log(`DELETE /api/users/${userId} - Deleting user`);
+  
+  const userIndex = usersDB.findIndex(u => u.id === userId);
+  if (userIndex === -1) {
+    return res.status(404).json({ error: 'Usuario no encontrado' });
+  }
+  
+  usersDB.splice(userIndex, 1);
+  console.log('User deleted successfully');
   
   res.json({
     message: 'Usuario eliminado exitosamente',
-    userId: parseInt(userId)
+    userId: userId
   });
 });
 
 // ===== RUTAS DE RADIOS =====
-// Obtener todas las radios
 app.get('/api/radios', authMiddleware, (req, res) => {
-  console.log('GET /api/radios - Fetching radios');
-  const radios = [
-    {
-      id: 1,
-      name: 'Radio Demo FM',
-      user_id: 2,
-      username: 'cliente1',
-      email: 'cliente1@ejemplo.com',
-      plan_id: 1,
-      plan_name: 'Plan Básico',
-      server_type: 'shoutcast',
-      port: 8000,
-      status: 'active',
-      current_listeners: 15,
-      max_listeners: 100,
-      bitrate: 128,
-      mount_point: '/demo',
-      created_at: new Date().toISOString()
-    }
-  ];
-  res.json(radios);
+  console.log('GET /api/radios - Fetching radios from memory');
+  console.log('Current radios in DB:', radiosDB);
+  res.json(radiosDB);
 });
 
-// Crear radio
 app.post('/api/radios', authMiddleware, (req, res) => {
   console.log('POST /api/radios - Creating radio:', req.body);
-  const { name, user_id, plan_id, server_type, bitrate, max_listeners, mount_point } = req.body;
+  const { name, user_id, plan_id, server_type, bitrate, max_listeners, mount_point, port } = req.body;
   
   if (!name) {
     return res.status(400).json({ error: 'El nombre de la radio es requerido' });
   }
   
+  // Asignar puerto automáticamente si no se especifica
+  const assignedPort = port || getNextAvailablePort();
+  
+  // Buscar información del usuario
+  const user = usersDB.find(u => u.id === parseInt(user_id));
+  const username = user ? user.username : 'Sin asignar';
+  const email = user ? user.email : '';
+  
   const newRadio = {
-    id: Date.now(), // ID temporal
+    id: nextRadioId++,
     name,
-    user_id: user_id || req.user.id,
-    plan_id: plan_id || 1,
+    user_id: parseInt(user_id) || req.user.id,
+    username,
+    email,
+    plan_id: parseInt(plan_id) || 1,
+    plan_name: 'Plan Básico', // Por defecto
     server_type: server_type || 'shoutcast',
-    bitrate: bitrate || 128,
-    max_listeners: max_listeners || 100,
+    port: assignedPort,
+    bitrate: parseInt(bitrate) || 128,
+    max_listeners: parseInt(max_listeners) || 100,
     mount_point: mount_point || '/stream',
     status: 'inactive',
     current_listeners: 0,
     created_at: new Date().toISOString()
   };
   
+  radiosDB.push(newRadio);
   console.log('Radio created successfully:', newRadio);
+  console.log('Updated radios DB:', radiosDB);
+  
   res.status(201).json({
     message: 'Radio creada exitosamente',
     radio: newRadio
   });
 });
 
-// Actualizar estado de radio
 app.patch('/api/radios/:id/status', authMiddleware, (req, res) => {
-  const radioId = req.params.id;
+  const radioId = parseInt(req.params.id);
   const { status } = req.body;
   console.log(`PATCH /api/radios/${radioId}/status - Updating status to:`, status);
   
-  res.json({
-    message: 'Estado de radio actualizado exitosamente',
-    radioId: parseInt(radioId),
-    status
-  });
-});
-
-// Actualizar radio
-app.put('/api/radios/:id', authMiddleware, (req, res) => {
-  const radioId = req.params.id;
-  console.log(`PUT /api/radios/${radioId} - Updating radio:`, req.body);
+  const radioIndex = radiosDB.findIndex(r => r.id === radioId);
+  if (radioIndex === -1) {
+    return res.status(404).json({ error: 'Radio no encontrada' });
+  }
+  
+  radiosDB[radioIndex].status = status;
+  console.log('Radio status updated:', radiosDB[radioIndex]);
   
   res.json({
-    message: 'Radio actualizada exitosamente',
-    radioId: parseInt(radioId)
+    message: 'Estado de radio actualizado exitosamente',
+    radio: radiosDB[radioIndex]
   });
 });
 
-// Eliminar radio
+app.put('/api/radios/:id', authMiddleware, (req, res) => {
+  const radioId = parseInt(req.params.id);
+  console.log(`PUT /api/radios/${radioId} - Updating radio:`, req.body);
+  
+  const radioIndex = radiosDB.findIndex(r => r.id === radioId);
+  if (radioIndex === -1) {
+    return res.status(404).json({ error: 'Radio no encontrada' });
+  }
+  
+  const { name, user_id, plan_id, server_type, bitrate, max_listeners, mount_point, port } = req.body;
+  
+  // Si se cambia el puerto, verificar que esté disponible
+  if (port && port !== radiosDB[radioIndex].port) {
+    const portInUse = radiosDB.some(r => r.port === parseInt(port) && r.id !== radioId);
+    if (portInUse) {
+      return res.status(400).json({ error: 'Puerto ya está en uso' });
+    }
+  }
+  
+  // Actualizar radio
+  radiosDB[radioIndex] = {
+    ...radiosDB[radioIndex],
+    name: name || radiosDB[radioIndex].name,
+    user_id: parseInt(user_id) || radiosDB[radioIndex].user_id,
+    plan_id: parseInt(plan_id) || radiosDB[radioIndex].plan_id,
+    server_type: server_type || radiosDB[radioIndex].server_type,
+    bitrate: parseInt(bitrate) || radiosDB[radioIndex].bitrate,
+    max_listeners: parseInt(max_listeners) || radiosDB[radioIndex].max_listeners,
+    mount_point: mount_point || radiosDB[radioIndex].mount_point,
+    port: parseInt(port) || radiosDB[radioIndex].port
+  };
+  
+  console.log('Radio updated successfully:', radiosDB[radioIndex]);
+  res.json({
+    message: 'Radio actualizada exitosamente',
+    radio: radiosDB[radioIndex]
+  });
+});
+
 app.delete('/api/radios/:id', authMiddleware, (req, res) => {
-  const radioId = req.params.id;
+  const radioId = parseInt(req.params.id);
   console.log(`DELETE /api/radios/${radioId} - Deleting radio`);
+  
+  const radioIndex = radiosDB.findIndex(r => r.id === radioId);
+  if (radioIndex === -1) {
+    return res.status(404).json({ error: 'Radio no encontrada' });
+  }
+  
+  radiosDB.splice(radioIndex, 1);
+  console.log('Radio deleted successfully');
   
   res.json({
     message: 'Radio eliminada exitosamente',
-    radioId: parseInt(radioId)
+    radioId: radioId
+  });
+});
+
+// Ruta para obtener puertos disponibles
+app.get('/api/radios/available-ports', authMiddleware, (req, res) => {
+  const basePorts = [8000, 8002, 8004, 8006, 8008, 8010, 8012, 8014, 8016, 8018];
+  const usedPorts = radiosDB.map(radio => radio.port);
+  const availablePorts = basePorts.filter(port => !usedPorts.includes(port));
+  
+  res.json({
+    available_ports: availablePorts,
+    next_auto_port: getNextAvailablePort(),
+    used_ports: usedPorts
   });
 });
 
