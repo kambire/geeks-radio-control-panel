@@ -29,6 +29,7 @@ const UserManagement = () => {
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const [formData, setFormData] = useState({
     username: '',
     email: '',
@@ -46,21 +47,35 @@ const UserManagement = () => {
 
   const fetchUsers = async () => {
     try {
+      console.log('Fetching users...');
       const token = localStorage.getItem('token');
       const response = await fetch('/api/users', {
         headers: {
-          'Authorization': `Bearer ${token}`
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
         }
       });
 
+      console.log('Users response status:', response.status);
+      
       if (response.ok) {
         const data = await response.json();
+        console.log('Users data received:', data);
         setUsers(data);
+      } else {
+        const errorData = await response.text();
+        console.error('Error fetching users:', response.status, errorData);
+        toast({
+          title: "Error",
+          description: "No se pudieron cargar los usuarios",
+          variant: "destructive",
+        });
       }
     } catch (error) {
+      console.error('Network error fetching users:', error);
       toast({
         title: "Error",
-        description: "No se pudieron cargar los usuarios",
+        description: "Error de conexión al cargar usuarios",
         variant: "destructive",
       });
     } finally {
@@ -70,8 +85,10 @@ const UserManagement = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitting(true);
     
     try {
+      console.log('Submitting user form:', formData);
       const token = localStorage.getItem('token');
       const url = editingUser ? `/api/users/${editingUser.id}` : '/api/users';
       const method = editingUser ? 'PUT' : 'POST';
@@ -85,25 +102,35 @@ const UserManagement = () => {
         body: JSON.stringify(formData)
       });
 
+      console.log('User submit response status:', response.status);
+
       if (response.ok) {
+        const result = await response.json();
+        console.log('User submit result:', result);
+        
         toast({
           title: "Éxito",
           description: `Usuario ${editingUser ? 'actualizado' : 'creado'} exitosamente`,
         });
         
-        fetchUsers();
+        // Refresh the users list
+        await fetchUsers();
         resetForm();
         setDialogOpen(false);
       } else {
-        const error = await response.json();
-        throw new Error(error.error || 'Error en la operación');
+        const errorData = await response.json();
+        console.error('Error submitting user:', errorData);
+        throw new Error(errorData.error || 'Error en la operación');
       }
     } catch (error) {
+      console.error('Error in handleSubmit:', error);
       toast({
         title: "Error",
         description: error instanceof Error ? error.message : 'Error desconocido',
         variant: "destructive",
       });
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -126,6 +153,7 @@ const UserManagement = () => {
     if (!confirm('¿Estás seguro de eliminar este usuario?')) return;
 
     try {
+      console.log('Deleting user:', userId);
       const token = localStorage.getItem('token');
       const response = await fetch(`/api/users/${userId}`, {
         method: 'DELETE',
@@ -139,12 +167,17 @@ const UserManagement = () => {
           title: "Éxito",
           description: "Usuario eliminado exitosamente",
         });
-        fetchUsers();
+        // Refresh the users list
+        await fetchUsers();
+      } else {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Error eliminando usuario');
       }
     } catch (error) {
+      console.error('Error deleting user:', error);
       toast({
         title: "Error",
-        description: "No se pudo eliminar el usuario",
+        description: error instanceof Error ? error.message : 'No se pudo eliminar el usuario',
         variant: "destructive",
       });
     }
@@ -222,6 +255,7 @@ const UserManagement = () => {
                     onChange={(e) => setFormData({...formData, username: e.target.value})}
                     className="bg-slate-700 border-slate-600"
                     required
+                    disabled={submitting}
                   />
                 </div>
                 <div>
@@ -233,6 +267,7 @@ const UserManagement = () => {
                     onChange={(e) => setFormData({...formData, email: e.target.value})}
                     className="bg-slate-700 border-slate-600"
                     required
+                    disabled={submitting}
                   />
                 </div>
               </div>
@@ -249,11 +284,16 @@ const UserManagement = () => {
                     onChange={(e) => setFormData({...formData, password: e.target.value})}
                     className="bg-slate-700 border-slate-600"
                     required={!editingUser}
+                    disabled={submitting}
                   />
                 </div>
                 <div>
                   <Label htmlFor="role">Rol</Label>
-                  <Select value={formData.role} onValueChange={(value) => setFormData({...formData, role: value})}>
+                  <Select 
+                    value={formData.role} 
+                    onValueChange={(value) => setFormData({...formData, role: value})}
+                    disabled={submitting}
+                  >
                     <SelectTrigger className="bg-slate-700 border-slate-600">
                       <SelectValue />
                     </SelectTrigger>
@@ -272,6 +312,7 @@ const UserManagement = () => {
                   value={formData.full_name}
                   onChange={(e) => setFormData({...formData, full_name: e.target.value})}
                   className="bg-slate-700 border-slate-600"
+                  disabled={submitting}
                 />
               </div>
               
@@ -283,6 +324,7 @@ const UserManagement = () => {
                     value={formData.phone}
                     onChange={(e) => setFormData({...formData, phone: e.target.value})}
                     className="bg-slate-700 border-slate-600"
+                    disabled={submitting}
                   />
                 </div>
                 <div>
@@ -292,16 +334,26 @@ const UserManagement = () => {
                     value={formData.company}
                     onChange={(e) => setFormData({...formData, company: e.target.value})}
                     className="bg-slate-700 border-slate-600"
+                    disabled={submitting}
                   />
                 </div>
               </div>
               
               <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  onClick={() => setDialogOpen(false)}
+                  disabled={submitting}
+                >
                   Cancelar
                 </Button>
-                <Button type="submit" className="bg-orange-500 hover:bg-orange-600">
-                  {editingUser ? 'Actualizar' : 'Crear'} Usuario
+                <Button 
+                  type="submit" 
+                  className="bg-orange-500 hover:bg-orange-600"
+                  disabled={submitting}
+                >
+                  {submitting ? 'Guardando...' : (editingUser ? 'Actualizar' : 'Crear')} Usuario
                 </Button>
               </DialogFooter>
             </form>
@@ -313,61 +365,67 @@ const UserManagement = () => {
         <CardHeader>
           <CardTitle className="text-white">Lista de Usuarios</CardTitle>
           <CardDescription>
-            Administra todos los usuarios del sistema
+            Administra todos los usuarios del sistema ({users.length} usuarios)
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="text-slate-300">Usuario</TableHead>
-                <TableHead className="text-slate-300">Email</TableHead>
-                <TableHead className="text-slate-300">Rol</TableHead>
-                <TableHead className="text-slate-300">Nombre</TableHead>
-                <TableHead className="text-slate-300">Estado</TableHead>
-                <TableHead className="text-slate-300">Último Login</TableHead>
-                <TableHead className="text-slate-300">Acciones</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {users.map((user) => (
-                <TableRow key={user.id}>
-                  <TableCell className="text-white font-medium">{user.username}</TableCell>
-                  <TableCell className="text-slate-300">{user.email}</TableCell>
-                  <TableCell>{getRoleBadge(user.role)}</TableCell>
-                  <TableCell className="text-slate-300">{user.full_name || '-'}</TableCell>
-                  <TableCell>
-                    <Badge variant={user.is_active ? "default" : "secondary"}>
-                      {user.is_active ? 'Activo' : 'Inactivo'}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-slate-300">
-                    {user.last_login ? new Date(user.last_login).toLocaleDateString() : 'Nunca'}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex space-x-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handleEdit(user)}
-                        className="border-slate-600 text-slate-300 hover:bg-slate-700"
-                      >
-                        <Edit className="h-3 w-3" />
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handleDelete(user.id)}
-                        className="border-red-600 text-red-400 hover:bg-red-900/20"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  </TableCell>
+          {users.length === 0 ? (
+            <div className="text-center py-8 text-slate-400">
+              No hay usuarios registrados
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-slate-300">Usuario</TableHead>
+                  <TableHead className="text-slate-300">Email</TableHead>
+                  <TableHead className="text-slate-300">Rol</TableHead>
+                  <TableHead className="text-slate-300">Nombre</TableHead>
+                  <TableHead className="text-slate-300">Estado</TableHead>
+                  <TableHead className="text-slate-300">Último Login</TableHead>
+                  <TableHead className="text-slate-300">Acciones</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {users.map((user) => (
+                  <TableRow key={user.id}>
+                    <TableCell className="text-white font-medium">{user.username}</TableCell>
+                    <TableCell className="text-slate-300">{user.email}</TableCell>
+                    <TableCell>{getRoleBadge(user.role)}</TableCell>
+                    <TableCell className="text-slate-300">{user.full_name || '-'}</TableCell>
+                    <TableCell>
+                      <Badge variant={user.is_active ? "default" : "secondary"}>
+                        {user.is_active ? 'Activo' : 'Inactivo'}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-slate-300">
+                      {user.last_login ? new Date(user.last_login).toLocaleDateString() : 'Nunca'}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex space-x-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleEdit(user)}
+                          className="border-slate-600 text-slate-300 hover:bg-slate-700"
+                        >
+                          <Edit className="h-3 w-3" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleDelete(user.id)}
+                          className="border-red-600 text-red-400 hover:bg-red-900/20"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
         </CardContent>
       </Card>
     </div>

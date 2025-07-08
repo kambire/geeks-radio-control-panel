@@ -1,5 +1,5 @@
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -25,180 +25,290 @@ import { toast } from "@/hooks/use-toast";
 interface RadioStation {
   id: number;
   name: string;
-  client: string;
-  plan: string;
-  server: string;
-  port: number;
-  status: 'active' | 'suspended';
-  listeners: number;
-  maxListeners: number;
+  user_id?: number;
+  username?: string;
+  email?: string;
+  plan_id?: number;
+  plan_name?: string;
+  server_type: string;
+  port?: number;
+  status: 'active' | 'inactive' | 'suspended';
+  current_listeners?: number;
+  max_listeners: number;
   bitrate: number;
-  autodjEnabled: boolean;
-  createdAt: string;
+  mount_point?: string;
+  created_at: string;
+}
+
+interface Plan {
+  id: number;
+  name: string;
+  max_listeners: number;
+}
+
+interface User {
+  id: number;
+  username: string;
+  email: string;
+  role: string;
 }
 
 const RadiosManager = () => {
-  const [radios, setRadios] = useState<RadioStation[]>([
-    {
-      id: 1,
-      name: "Radio Rock FM",
-      client: "Juan Pérez",
-      plan: "Premium",
-      server: "Icecast",
-      port: 8000,
-      status: "active",
-      listeners: 156,
-      maxListeners: 500,
-      bitrate: 128,
-      autodjEnabled: true,
-      createdAt: "2024-01-15"
-    },
-    {
-      id: 2,
-      name: "Salsa Total",
-      client: "María García",
-      plan: "Básico",
-      server: "Shoutcast",
-      port: 8001,
-      status: "active",
-      listeners: 89,
-      maxListeners: 100,
-      bitrate: 96,
-      autodjEnabled: false,
-      createdAt: "2024-01-20"
-    },
-    {
-      id: 3,
-      name: "Pop Latino",
-      client: "Carlos Ruiz",
-      plan: "Pro",
-      server: "Icecast",
-      port: 8002,
-      status: "suspended",
-      listeners: 0,
-      maxListeners: 1000,
-      bitrate: 192,
-      autodjEnabled: true,
-      createdAt: "2024-02-01"
-    }
-  ]);
-
+  const [radios, setRadios] = useState<RadioStation[]>([]);
+  const [plans, setPlans] = useState<Plan[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingRadio, setEditingRadio] = useState<RadioStation | null>(null);
   const [formData, setFormData] = useState({
     name: "",
-    client: "",
-    plan: "",
-    server: "Icecast",
-    port: 8000,
-    maxListeners: 100,
+    user_id: "",
+    plan_id: "",
+    server_type: "shoutcast",
     bitrate: 128,
-    autodjEnabled: false
+    max_listeners: 100,
+    mount_point: ""
   });
 
-  const plans = ["Básico", "Premium", "Pro", "Enterprise"];
-  const clients = ["Juan Pérez", "María García", "Carlos Ruiz", "Ana López", "Pedro Silva"];
+  useEffect(() => {
+    fetchData();
+  }, []);
 
-  const handleCreate = () => {
-    const newRadio: RadioStation = {
-      id: Date.now(),
-      name: formData.name,
-      client: formData.client,
-      plan: formData.plan,
-      server: formData.server,
-      port: formData.port,
-      status: "active",
-      listeners: 0,
-      maxListeners: formData.maxListeners,
-      bitrate: formData.bitrate,
-      autodjEnabled: formData.autodjEnabled,
-      createdAt: new Date().toISOString().split('T')[0]
-    };
+  const fetchData = async () => {
+    try {
+      await Promise.all([
+        fetchRadios(),
+        fetchPlans(),
+        fetchUsers()
+      ]);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    setRadios([...radios, newRadio]);
-    setIsDialogOpen(false);
-    resetForm();
-    toast({
-      title: "Radio creada",
-      description: `La radio "${formData.name}" ha sido creada exitosamente.`,
-    });
+  const fetchRadios = async () => {
+    try {
+      console.log('Fetching radios...');
+      const token = localStorage.getItem('token');
+      const response = await fetch('/api/radios', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      console.log('Radios response status:', response.status);
+      
+      if (response.ok) {
+        const data = await response.json();
+        console.log('Radios data received:', data);
+        setRadios(data);
+      } else {
+        console.error('Error fetching radios:', response.status);
+        toast({
+          title: "Error",
+          description: "No se pudieron cargar las radios",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error('Network error fetching radios:', error);
+      toast({
+        title: "Error",
+        description: "Error de conexión al cargar radios",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const fetchPlans = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch('/api/plans', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setPlans(data);
+      }
+    } catch (error) {
+      console.error('Error fetching plans:', error);
+    }
+  };
+
+  const fetchUsers = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch('/api/users', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setUsers(data.filter((user: User) => user.role === 'client'));
+      }
+    } catch (error) {
+      console.error('Error fetching users:', error);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSubmitting(true);
+
+    try {
+      console.log('Submitting radio form:', formData);
+      const token = localStorage.getItem('token');
+      const url = editingRadio ? `/api/radios/${editingRadio.id}` : '/api/radios';
+      const method = editingRadio ? 'PUT' : 'POST';
+
+      const response = await fetch(url, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(formData)
+      });
+
+      console.log('Radio submit response status:', response.status);
+
+      if (response.ok) {
+        const result = await response.json();
+        console.log('Radio submit result:', result);
+        
+        toast({
+          title: "Éxito",
+          description: `Radio ${editingRadio ? 'actualizada' : 'creada'} exitosamente`,
+        });
+        
+        await fetchRadios();
+        resetForm();
+        setIsDialogOpen(false);
+      } else {
+        const errorData = await response.json();
+        console.error('Error submitting radio:', errorData);
+        throw new Error(errorData.error || 'Error en la operación');
+      }
+    } catch (error) {
+      console.error('Error in handleSubmit:', error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : 'Error desconocido',
+        variant: "destructive",
+      });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const handleEdit = (radio: RadioStation) => {
     setEditingRadio(radio);
     setFormData({
       name: radio.name,
-      client: radio.client,
-      plan: radio.plan,
-      server: radio.server,
-      port: radio.port,
-      maxListeners: radio.maxListeners,
+      user_id: radio.user_id?.toString() || "",
+      plan_id: radio.plan_id?.toString() || "",
+      server_type: radio.server_type,
       bitrate: radio.bitrate,
-      autodjEnabled: radio.autodjEnabled
+      max_listeners: radio.max_listeners,
+      mount_point: radio.mount_point || ""
     });
     setIsDialogOpen(true);
   };
 
-  const handleUpdate = () => {
-    if (!editingRadio) return;
+  const handleDelete = async (id: number) => {
+    if (!confirm('¿Estás seguro de eliminar esta radio?')) return;
 
-    const updatedRadios = radios.map(radio => 
-      radio.id === editingRadio.id 
-        ? { ...radio, ...formData }
-        : radio
-    );
+    try {
+      console.log('Deleting radio:', id);
+      const token = localStorage.getItem('token');
+      const response = await fetch(`/api/radios/${id}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
 
-    setRadios(updatedRadios);
-    setIsDialogOpen(false);
-    setEditingRadio(null);
-    resetForm();
-    toast({
-      title: "Radio actualizada",
-      description: `La radio "${formData.name}" ha sido actualizada exitosamente.`,
-    });
+      if (response.ok) {
+        toast({
+          title: "Éxito",
+          description: "Radio eliminada exitosamente",
+        });
+        await fetchRadios();
+      } else {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Error eliminando radio');
+      }
+    } catch (error) {
+      console.error('Error deleting radio:', error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : 'No se pudo eliminar la radio',
+        variant: "destructive",
+      });
+    }
   };
 
-  const handleDelete = (id: number) => {
-    const radio = radios.find(r => r.id === id);
-    setRadios(radios.filter(r => r.id !== id));
-    toast({
-      title: "Radio eliminada",
-      description: `La radio "${radio?.name}" ha sido eliminada.`,
-      variant: "destructive",
-    });
-  };
+  const toggleStatus = async (id: number) => {
+    try {
+      const radio = radios.find(r => r.id === id);
+      if (!radio) return;
 
-  const toggleStatus = (id: number) => {
-    const updatedRadios = radios.map(radio => 
-      radio.id === id 
-        ? { 
-            ...radio, 
-            status: radio.status === 'active' ? 'suspended' as const : 'active' as const,
-            listeners: radio.status === 'active' ? 0 : radio.listeners
-          }
-        : radio
-    );
-    setRadios(updatedRadios);
-    
-    const radio = radios.find(r => r.id === id);
-    toast({
-      title: `Radio ${radio?.status === 'active' ? 'suspendida' : 'activada'}`,
-      description: `${radio?.name} ha sido ${radio?.status === 'active' ? 'suspendida' : 'activada'}.`,
-    });
+      const newStatus = radio.status === 'active' ? 'inactive' : 'active';
+      
+      const token = localStorage.getItem('token');
+      const response = await fetch(`/api/radios/${id}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ status: newStatus })
+      });
+
+      if (response.ok) {
+        toast({
+          title: `Radio ${newStatus === 'active' ? 'activada' : 'desactivada'}`,
+          description: `${radio.name} ha sido ${newStatus === 'active' ? 'activada' : 'desactivada'}.`,
+        });
+        await fetchRadios();
+      }
+    } catch (error) {
+      console.error('Error toggling radio status:', error);
+      toast({
+        title: "Error",
+        description: "No se pudo cambiar el estado de la radio",
+        variant: "destructive",
+      });
+    }
   };
 
   const resetForm = () => {
     setFormData({
       name: "",
-      client: "",
-      plan: "",
-      server: "Icecast",
-      port: 8000,
-      maxListeners: 100,
+      user_id: "",
+      plan_id: "",
+      server_type: "shoutcast",
       bitrate: 128,
-      autodjEnabled: false
+      max_listeners: 100,
+      mount_point: ""
     });
+    setEditingRadio(null);
   };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center p-8">
+        <div className="text-white">Cargando radios...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -211,7 +321,7 @@ const RadiosManager = () => {
                 Gestión de Radios
               </CardTitle>
               <CardDescription className="text-slate-400">
-                Administra todas las estaciones de radio del sistema
+                Administra todas las estaciones de radio del sistema ({radios.length} radios)
               </CardDescription>
             </div>
             <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
@@ -236,213 +346,239 @@ const RadiosManager = () => {
                     {editingRadio ? 'Modifica los datos de la radio' : 'Configura una nueva estación de radio'}
                   </DialogDescription>
                 </DialogHeader>
-                <div className="grid grid-cols-2 gap-4 py-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="name" className="text-slate-300">Nombre de la Radio</Label>
-                    <Input
-                      id="name"
-                      value={formData.name}
-                      onChange={(e) => setFormData({...formData, name: e.target.value})}
-                      className="bg-slate-700 border-slate-600 text-white"
-                      placeholder="Ej: Radio Rock FM"
-                    />
+                <form onSubmit={handleSubmit} className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="name" className="text-slate-300">Nombre de la Radio</Label>
+                      <Input
+                        id="name"
+                        value={formData.name}
+                        onChange={(e) => setFormData({...formData, name: e.target.value})}
+                        className="bg-slate-700 border-slate-600 text-white"
+                        placeholder="Ej: Radio Rock FM"
+                        required
+                        disabled={submitting}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="user_id" className="text-slate-300">Cliente</Label>
+                      <Select 
+                        value={formData.user_id} 
+                        onValueChange={(value) => setFormData({...formData, user_id: value})}
+                        disabled={submitting}
+                      >
+                        <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
+                          <SelectValue placeholder="Selecciona un cliente" />
+                        </SelectTrigger>
+                        <SelectContent className="bg-slate-700 border-slate-600">
+                          {users.map(user => (
+                            <SelectItem key={user.id} value={user.id.toString()} className="text-white">
+                              {user.username} ({user.email})
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="client" className="text-slate-300">Cliente</Label>
-                    <Select value={formData.client} onValueChange={(value) => setFormData({...formData, client: value})}>
-                      <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
-                        <SelectValue placeholder="Selecciona un cliente" />
-                      </SelectTrigger>
-                      <SelectContent className="bg-slate-700 border-slate-600">
-                        {clients.map(client => (
-                          <SelectItem key={client} value={client} className="text-white">
-                            {client}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                  
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="plan_id" className="text-slate-300">Plan</Label>
+                      <Select 
+                        value={formData.plan_id} 
+                        onValueChange={(value) => setFormData({...formData, plan_id: value})}
+                        disabled={submitting}
+                      >
+                        <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
+                          <SelectValue placeholder="Selecciona un plan" />
+                        </SelectTrigger>
+                        <SelectContent className="bg-slate-700 border-slate-600">
+                          {plans.map(plan => (
+                            <SelectItem key={plan.id} value={plan.id.toString()} className="text-white">
+                              {plan.name} (Max: {plan.max_listeners} oyentes)
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="server_type" className="text-slate-300">Servidor</Label>
+                      <Select 
+                        value={formData.server_type} 
+                        onValueChange={(value) => setFormData({...formData, server_type: value})}
+                        disabled={submitting}
+                      >
+                        <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="bg-slate-700 border-slate-600">
+                          <SelectItem value="shoutcast" className="text-white">SHOUTcast</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="plan" className="text-slate-300">Plan</Label>
-                    <Select value={formData.plan} onValueChange={(value) => setFormData({...formData, plan: value})}>
-                      <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
-                        <SelectValue placeholder="Selecciona un plan" />
-                      </SelectTrigger>
-                      <SelectContent className="bg-slate-700 border-slate-600">
-                        {plans.map(plan => (
-                          <SelectItem key={plan} value={plan} className="text-white">
-                            {plan}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                  
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="max_listeners" className="text-slate-300">Máx. Oyentes</Label>
+                      <Input
+                        id="max_listeners"
+                        type="number"
+                        value={formData.max_listeners}
+                        onChange={(e) => setFormData({...formData, max_listeners: parseInt(e.target.value) || 100})}
+                        className="bg-slate-700 border-slate-600 text-white"
+                        disabled={submitting}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="bitrate" className="text-slate-300">Bitrate (kbps)</Label>
+                      <Select 
+                        value={formData.bitrate.toString()} 
+                        onValueChange={(value) => setFormData({...formData, bitrate: parseInt(value)})}
+                        disabled={submitting}
+                      >
+                        <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="bg-slate-700 border-slate-600">
+                          <SelectItem value="64" className="text-white">64 kbps</SelectItem>
+                          <SelectItem value="96" className="text-white">96 kbps</SelectItem>
+                          <SelectItem value="128" className="text-white">128 kbps</SelectItem>
+                          <SelectItem value="192" className="text-white">192 kbps</SelectItem>
+                          <SelectItem value="320" className="text-white">320 kbps</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="mount_point" className="text-slate-300">Mount Point</Label>
+                      <Input
+                        id="mount_point"
+                        value={formData.mount_point}
+                        onChange={(e) => setFormData({...formData, mount_point: e.target.value})}
+                        className="bg-slate-700 border-slate-600 text-white"
+                        placeholder="/stream"
+                        disabled={submitting}
+                      />
+                    </div>
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="server" className="text-slate-300">Servidor</Label>
-                    <Select value={formData.server} onValueChange={(value) => setFormData({...formData, server: value})}>
-                      <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent className="bg-slate-700 border-slate-600">
-                        <SelectItem value="Icecast" className="text-white">Icecast</SelectItem>
-                        <SelectItem value="Shoutcast" className="text-white">Shoutcast</SelectItem>
-                      </SelectContent>
-                    </Select>
+                  
+                  <div className="flex justify-end space-x-2 pt-4">
+                    <Button 
+                      type="button"
+                      variant="outline" 
+                      onClick={() => setIsDialogOpen(false)}
+                      className="border-slate-600 text-slate-300"
+                      disabled={submitting}
+                    >
+                      Cancelar
+                    </Button>
+                    <Button 
+                      type="submit"
+                      className="bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600"
+                      disabled={submitting}
+                    >
+                      {submitting ? 'Guardando...' : (editingRadio ? 'Actualizar' : 'Crear')} Radio
+                    </Button>
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="port" className="text-slate-300">Puerto</Label>
-                    <Input
-                      id="port"
-                      type="number"
-                      value={formData.port}
-                      onChange={(e) => setFormData({...formData, port: parseInt(e.target.value)})}
-                      className="bg-slate-700 border-slate-600 text-white"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="maxListeners" className="text-slate-300">Máx. Oyentes</Label>
-                    <Input
-                      id="maxListeners"
-                      type="number"
-                      value={formData.maxListeners}
-                      onChange={(e) => setFormData({...formData, maxListeners: parseInt(e.target.value)})}
-                      className="bg-slate-700 border-slate-600 text-white"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="bitrate" className="text-slate-300">Bitrate (kbps)</Label>
-                    <Select value={formData.bitrate.toString()} onValueChange={(value) => setFormData({...formData, bitrate: parseInt(value)})}>
-                      <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent className="bg-slate-700 border-slate-600">
-                        <SelectItem value="64" className="text-white">64 kbps</SelectItem>
-                        <SelectItem value="96" className="text-white">96 kbps</SelectItem>
-                        <SelectItem value="128" className="text-white">128 kbps</SelectItem>
-                        <SelectItem value="192" className="text-white">192 kbps</SelectItem>
-                        <SelectItem value="320" className="text-white">320 kbps</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="flex items-center space-x-2 col-span-2">
-                    <Switch 
-                      id="autodj"
-                      checked={formData.autodjEnabled}
-                      onCheckedChange={(checked) => setFormData({...formData, autodjEnabled: checked})}
-                    />
-                    <Label htmlFor="autodj" className="text-slate-300">Habilitar AutoDJ</Label>
-                  </div>
-                </div>
-                <div className="flex justify-end space-x-2">
-                  <Button 
-                    variant="outline" 
-                    onClick={() => setIsDialogOpen(false)}
-                    className="border-slate-600 text-slate-300"
-                  >
-                    Cancelar
-                  </Button>
-                  <Button 
-                    onClick={editingRadio ? handleUpdate : handleCreate}
-                    className="bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600"
-                  >
-                    {editingRadio ? 'Actualizar' : 'Crear Radio'}
-                  </Button>
-                </div>
+                </form>
               </DialogContent>
             </Dialog>
           </div>
         </CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow className="border-slate-700">
-                <TableHead className="text-slate-300">Radio</TableHead>
-                <TableHead className="text-slate-300">Cliente</TableHead>
-                <TableHead className="text-slate-300">Servidor</TableHead>
-                <TableHead className="text-slate-300">Oyentes</TableHead>
-                <TableHead className="text-slate-300">Estado</TableHead>
-                <TableHead className="text-slate-300">Acciones</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {radios.map((radio) => (
-                <TableRow key={radio.id} className="border-slate-700">
-                  <TableCell>
-                    <div className="flex items-center space-x-3">
-                      {radio.status === 'active' ? (
-                        <PlayCircle className="h-4 w-4 text-green-500" />
-                      ) : (
-                        <PauseCircle className="h-4 w-4 text-red-500" />
-                      )}
-                      <div>
-                        <p className="font-medium text-white">{radio.name}</p>
-                        <p className="text-sm text-slate-400">
-                          {radio.server} : {radio.port} | {radio.bitrate}kbps
-                          {radio.autodjEnabled && " | AutoDJ"}
-                        </p>
-                      </div>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div>
-                      <p className="text-white">{radio.client}</p>
-                      <p className="text-sm text-slate-400">Plan {radio.plan}</p>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center space-x-2">
-                      <Server className="h-4 w-4 text-blue-500" />
-                      <span className="text-white">{radio.server}</span>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center space-x-2">
-                      <Headphones className="h-4 w-4 text-green-500" />
-                      <span className="text-white">
-                        {radio.listeners} / {radio.maxListeners}
-                      </span>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <Badge 
-                      variant={radio.status === 'active' ? 'default' : 'destructive'}
-                      className={radio.status === 'active' ? 'bg-green-500/20 text-green-400 border-green-500/30' : ''}
-                    >
-                      {radio.status === 'active' ? 'Activa' : 'Suspendida'}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center space-x-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => toggleStatus(radio.id)}
-                        className="border-slate-600 text-slate-300 hover:bg-slate-700"
-                      >
-                        {radio.status === 'active' ? <PauseCircle className="h-4 w-4" /> : <PlayCircle className="h-4 w-4" />}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleEdit(radio)}
-                        className="border-slate-600 text-slate-300 hover:bg-slate-700"
-                      >
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleDelete(radio.id)}
-                        className="border-red-600 text-red-400 hover:bg-red-900/20"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </TableCell>
+          {radios.length === 0 ? (
+            <div className="text-center py-8 text-slate-400">
+              No hay radios registradas
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow className="border-slate-700">
+                  <TableHead className="text-slate-300">Radio</TableHead>
+                  <TableHead className="text-slate-300">Cliente</TableHead>
+                  <TableHead className="text-slate-300">Plan</TableHead>
+                  <TableHead className="text-slate-300">Oyentes</TableHead>
+                  <TableHead className="text-slate-300">Estado</TableHead>
+                  <TableHead className="text-slate-300">Acciones</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {radios.map((radio) => (
+                  <TableRow key={radio.id} className="border-slate-700">
+                    <TableCell>
+                      <div className="flex items-center space-x-3">
+                        {radio.status === 'active' ? (
+                          <PlayCircle className="h-4 w-4 text-green-500" />
+                        ) : (
+                          <PauseCircle className="h-4 w-4 text-red-500" />
+                        )}
+                        <div>
+                          <p className="font-medium text-white">{radio.name}</p>
+                          <p className="text-sm text-slate-400">
+                            {radio.server_type} | {radio.bitrate}kbps
+                            {radio.mount_point && ` | ${radio.mount_point}`}
+                          </p>
+                        </div>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div>
+                        <p className="text-white">{radio.username || 'Sin asignar'}</p>
+                        <p className="text-sm text-slate-400">{radio.email || ''}</p>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <span className="text-white">{radio.plan_name || 'Sin plan'}</span>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center space-x-2">
+                        <Headphones className="h-4 w-4 text-green-500" />
+                        <span className="text-white">
+                          {radio.current_listeners || 0} / {radio.max_listeners}
+                        </span>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge 
+                        variant={radio.status === 'active' ? 'default' : 'destructive'}
+                        className={radio.status === 'active' ? 'bg-green-500/20 text-green-400 border-green-500/30' : ''}
+                      >
+                        {radio.status === 'active' ? 'Activa' : radio.status === 'inactive' ? 'Inactiva' : 'Suspendida'}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center space-x-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => toggleStatus(radio.id)}
+                          className="border-slate-600 text-slate-300 hover:bg-slate-700"
+                        >
+                          {radio.status === 'active' ? <PauseCircle className="h-4 w-4" /> : <PlayCircle className="h-4 w-4" />}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleEdit(radio)}
+                          className="border-slate-600 text-slate-300 hover:bg-slate-700"
+                        >
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleDelete(radio.id)}
+                          className="border-red-600 text-red-400 hover:bg-red-900/20"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
         </CardContent>
       </Card>
     </div>
